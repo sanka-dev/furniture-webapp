@@ -9,7 +9,7 @@ export function Footer() {
   const isHome = pathname === "/";
 
   return (
-    <footer className={cn(isHome ? "bg-[#f7e7e1] px-6 pb-10" : "bg-black text-white")}>
+    <footer className={cn(isHome ? "bg-[#f7e7e1] px-6 pt-10 pb-10" : "bg-black text-white")}>
       <div
         className={cn(
           "mx-auto max-w-6xl",
