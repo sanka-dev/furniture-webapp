@@ -2,14 +2,14 @@
 
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import {
-    OrbitControls,
-    PerspectiveCamera,
-    ContactShadows,
-    Environment,
-    MeshReflectorMaterial,
-    TransformControls,
-    Line,
-    useGLTF,
+  OrbitControls,
+  PerspectiveCamera,
+  ContactShadows,
+  Environment,
+  MeshReflectorMaterial,
+  TransformControls,
+  Line,
+  useGLTF,
 } from "@react-three/drei";
 import { EffectComposer, Bloom, Vignette, N8AO } from "@react-three/postprocessing";
 import { useDesignStore } from "@/lib/stores/design-store";
@@ -20,122 +20,204 @@ import { FURNITURE_CATALOG } from "@/lib/data/furniture";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 
 class ModelLoadBoundary extends Component<
-    { fallback: React.ReactNode; children: React.ReactNode },
-    { hasError: boolean }
+  { fallback: React.ReactNode; children: React.ReactNode },
+  { hasError: boolean }
 > {
-    constructor(props: { fallback: React.ReactNode; children: React.ReactNode }) {
-        super(props);
-        this.state = { hasError: false };
-    }
+  constructor(props: { fallback: React.ReactNode; children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
 
-    static getDerivedStateFromError() {
-        return { hasError: true };
-    }
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
 
-    componentDidCatch(error: unknown) {
-        console.warn("Custom model failed to load. Falling back to built-in geometry.", error);
-    }
+  componentDidCatch(error: unknown) {
+    console.warn("Custom model failed to load. Falling back to built-in geometry.", error);
+  }
 
-    render() {
-        if (this.state.hasError) {
-            return this.props.fallback;
-        }
-        return this.props.children;
+  render() {
+    if (this.state.hasError) {
+      return this.props.fallback;
     }
+    return this.props.children;
+  }
 }
 
 function hexToColor(hex: string): THREE.Color {
-    return new THREE.Color(hex);
+  return new THREE.Color(hex);
+}
+
+export type CinematicPreset = "showcase" | "sweep" | "detail";
+export type CinematicFormatPreference = "auto" | "mp4" | "webm";
+export type CinematicFocusMode = "room" | "selected";
+export interface CinematicPathPoint {
+  x: number;
+  y: number;
+}
+
+export interface CinematicOptions {
+  preset: CinematicPreset;
+  durationMs: number;
+  formatPreference: CinematicFormatPreference;
+  focusMode: CinematicFocusMode;
+  pathAnglesDeg: [number, number, number, number];
+  drawnPath: CinematicPathPoint[];
+}
+
+const CINEMATIC_DURATION_MS = 12000;
+
+export const DEFAULT_CINEMATIC_OPTIONS: CinematicOptions = {
+  preset: "showcase",
+  durationMs: CINEMATIC_DURATION_MS,
+  formatPreference: "auto",
+  focusMode: "room",
+  pathAnglesDeg: [-32, -10, 24, 42],
+  drawnPath: [],
+};
+
+function easeInOutSine(value: number) {
+  return -(Math.cos(Math.PI * value) - 1) / 2;
+}
+
+function downloadBlob(blob: Blob, fileName: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function toFileSafeName(value: string) {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "room";
+}
+
+function clamp01(value: number) {
+  return Math.max(0, Math.min(1, value));
 }
 
 function clamp(value: number, min: number, max: number) {
-    if (min > max) {
-        return (min + max) / 2;
-    }
-    return Math.max(min, Math.min(max, value));
+  if (min > max) {
+    return (min + max) / 2;
+  }
+  return Math.max(min, Math.min(max, value));
 }
 
 type RoomState = ReturnType<typeof useDesignStore.getState>["room"];
 type Vector3State = { x: number; y: number; z: number };
 
 function hasVector3StateChanged(current: Vector3State, next: Vector3State, epsilon = 0.001) {
-    return (
-        Math.abs(current.x - next.x) > epsilon ||
-        Math.abs(current.y - next.y) > epsilon ||
-        Math.abs(current.z - next.z) > epsilon
-    );
+  return (
+    Math.abs(current.x - next.x) > epsilon ||
+    Math.abs(current.y - next.y) > epsilon ||
+    Math.abs(current.z - next.z) > epsilon
+  );
 }
 
 function clampWalkCameraPosition(position: Vector3State, room: RoomState): Vector3State {
-    const minX = -room.width / 200 + 0.2;
-    const maxX = room.width / 200 - 0.2;
-    const minZ = -room.height / 200 + 0.2;
-    const maxZ = room.height / 200 - 0.2;
-    const minY = 0.3;
-    const maxY = room.wallHeight / 100 - 0.2;
+  const minX = -room.width / 200 + 0.2;
+  const maxX = room.width / 200 - 0.2;
+  const minZ = -room.height / 200 + 0.2;
+  const maxZ = room.height / 200 - 0.2;
+  const minY = 0.3;
+  const maxY = room.wallHeight / 100 - 0.2;
 
-    return {
-        x: clamp(position.x, minX, maxX),
-        y: clamp(position.y, minY, maxY),
-        z: clamp(position.z, minZ, maxZ),
-    };
+  return {
+    x: clamp(position.x, minX, maxX),
+    y: clamp(position.y, minY, maxY),
+    z: clamp(position.z, minZ, maxZ),
+  };
 }
 
 function clampOrbitTarget(position: Vector3State, room: RoomState): Vector3State {
-    const minX = -room.width / 200 + 0.1;
-    const maxX = room.width / 200 - 0.1;
-    const minZ = -room.height / 200 + 0.1;
-    const maxZ = room.height / 200 - 0.1;
-    const minY = 0.1;
-    const maxY = room.wallHeight / 100 - 0.1;
+  const minX = -room.width / 200 + 0.1;
+  const maxX = room.width / 200 - 0.1;
+  const minZ = -room.height / 200 + 0.1;
+  const maxZ = room.height / 200 - 0.1;
+  const minY = 0.1;
+  const maxY = room.wallHeight / 100 - 0.1;
 
-    return {
-        x: clamp(position.x, minX, maxX),
-        y: clamp(position.y, minY, maxY),
-        z: clamp(position.z, minZ, maxZ),
-    };
+  return {
+    x: clamp(position.x, minX, maxX),
+    y: clamp(position.y, minY, maxY),
+    z: clamp(position.z, minZ, maxZ),
+  };
 }
 
 function getRotatedHalfExtents(width: number, height: number, rotationRadians: number) {
-    const halfWidth = width / 2;
-    const halfHeight = height / 2;
-    const cos = Math.abs(Math.cos(rotationRadians));
-    const sin = Math.abs(Math.sin(rotationRadians));
+  const halfWidth = width / 2;
+  const halfHeight = height / 2;
+  const cos = Math.abs(Math.cos(rotationRadians));
+  const sin = Math.abs(Math.sin(rotationRadians));
 
-    return {
-        x: halfWidth * cos + halfHeight * sin,
-        z: halfWidth * sin + halfHeight * cos,
-    };
+  return {
+    x: halfWidth * cos + halfHeight * sin,
+    z: halfWidth * sin + halfHeight * cos,
+  };
+}
+
+function segmentProgress(progress: number, start: number, end: number) {
+  return clamp01((progress - start) / (end - start));
+}
+
+function lerpVec3(from: THREE.Vector3, to: THREE.Vector3, progress: number) {
+  return from.clone().lerp(to, progress);
+}
+
+function orbitOffset(radiusX: number, radiusZ: number, angleDeg: number, height: number) {
+  const angle = THREE.MathUtils.degToRad(angleDeg);
+  return new THREE.Vector3(Math.sin(angle) * radiusX, height, Math.cos(angle) * radiusZ);
+}
+
+function getItemFocusPoint(item: FurnitureItem, room: ReturnType<typeof useDesignStore.getState>["room"]) {
+  const roomW = room.width / 100;
+  const roomH = room.height / 100;
+  return new THREE.Vector3(
+    (item.x + item.width / 2) / 100 - roomW / 2,
+    Math.max(item.depth / 100, 0.4) * 0.45,
+    (item.y + item.height / 2) / 100 - roomH / 2,
+  );
+}
+
+function getDrawnPathPosition(point: CinematicPathPoint, room: ReturnType<typeof useDesignStore.getState>["room"], height: number) {
+  const roomW = room.width / 100;
+  const roomH = room.height / 100;
+  return new THREE.Vector3(
+    THREE.MathUtils.lerp(-roomW / 2, roomW / 2, point.x),
+    height,
+    THREE.MathUtils.lerp(roomH / 2, -roomH / 2, point.y),
+  );
 }
 
 function GradientBackground({ profile }: { profile: "default" | "cozy" }) {
-    const shaderRef = useRef<THREE.ShaderMaterial>(null);
+  const shaderRef = useRef<THREE.ShaderMaterial>(null);
 
-    const uniforms = useMemo(() => {
-        const isCozy = profile === "cozy";
-        return {
-            uTime: { value: 0 },
-            uTop: { value: new THREE.Color(isCozy ? "#2f2318" : "#0f1017") },
-            uBottom: { value: new THREE.Color(isCozy ? "#110d09" : "#040507") },
-            uGlow: { value: new THREE.Color(isCozy ? "#a66a40" : "#1b1c2f") },
-            uGlowStrength: { value: isCozy ? 0.24 : 0.14 },
-            uGrainStrength: { value: isCozy ? 0.035 : 0.015 },
-        };
-    }, [profile]);
+  const uniforms = useMemo(() => {
+    const isCozy = profile === "cozy";
+    return {
+      uTime: { value: 0 },
+      uTop: { value: new THREE.Color(isCozy ? "#2f2318" : "#0f1017") },
+      uBottom: { value: new THREE.Color(isCozy ? "#110d09" : "#040507") },
+      uGlow: { value: new THREE.Color(isCozy ? "#a66a40" : "#1b1c2f") },
+      uGlowStrength: { value: isCozy ? 0.24 : 0.14 },
+      uGrainStrength: { value: isCozy ? 0.035 : 0.015 },
+    };
+  }, [profile]);
 
-    useFrame((state) => {
-        if (shaderRef.current) {
-            shaderRef.current.uniforms.uTime.value = state.clock.elapsedTime;
-        }
-    });
+  useFrame((state) => {
+    if (shaderRef.current) {
+      shaderRef.current.uniforms.uTime.value = state.clock.elapsedTime;
+    }
+  });
 
-    return (
-        <mesh position={[0, 0, -20]} scale={[60, 60, 1]}>
-            <planeGeometry />
-            <shaderMaterial
-                ref={shaderRef}
-                uniforms={uniforms}
-                vertexShader={`
+  return (
+    <mesh position={[0, 0, -20]} scale={[60, 60, 1]}>
+      <planeGeometry />
+      <shaderMaterial
+        ref={shaderRef}
+        uniforms={uniforms}
+        vertexShader={`
           varying vec2 vUv;
 
           void main() {
@@ -143,7 +225,7 @@ function GradientBackground({ profile }: { profile: "default" | "cozy" }) {
             gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
           }
         `}
-                fragmentShader={`
+        fragmentShader={`
           varying vec2 vUv;
           uniform float uTime;
           uniform vec3 uTop;
@@ -166,271 +248,271 @@ function GradientBackground({ profile }: { profile: "default" | "cozy" }) {
             gl_FragColor = vec4(color, 1.0);
           }
         `}
-                side={THREE.DoubleSide}
-                depthWrite={false}
-                toneMapped={false}
-            />
-        </mesh>
-    );
+        side={THREE.DoubleSide}
+        depthWrite={false}
+        toneMapped={false}
+      />
+    </mesh>
+  );
 }
 
 
 function FirstPersonControls() {
-    const { camera } = useThree();
-    const { room, walkCameraPosition3d } = useDesignStore();
-    const [moveState, setMoveState] = useState({ forward: false, backward: false, left: false, right: false, up: false, down: false });
-    const velocity = useRef(new THREE.Vector3());
-    const direction = useRef(new THREE.Vector3());
-    const initializedRef = useRef(false);
+  const { camera } = useThree();
+  const { room, walkCameraPosition3d } = useDesignStore();
+  const [moveState, setMoveState] = useState({ forward: false, backward: false, left: false, right: false, up: false, down: false });
+  const velocity = useRef(new THREE.Vector3());
+  const direction = useRef(new THREE.Vector3());
+  const initializedRef = useRef(false);
 
 
-    useEffect(() => {
-        const nextPosition = clampWalkCameraPosition(walkCameraPosition3d, room);
-        if (hasVector3StateChanged(
-            { x: camera.position.x, y: camera.position.y, z: camera.position.z },
-            nextPosition,
-        )) {
-            camera.position.set(nextPosition.x, nextPosition.y, nextPosition.z);
-        }
-        if (!initializedRef.current) {
-            camera.lookAt(nextPosition.x, nextPosition.y, nextPosition.z - 1);
-            initializedRef.current = true;
-        }
+  useEffect(() => {
+    const nextPosition = clampWalkCameraPosition(walkCameraPosition3d, room);
+    if (hasVector3StateChanged(
+      { x: camera.position.x, y: camera.position.y, z: camera.position.z },
+      nextPosition,
+    )) {
+      camera.position.set(nextPosition.x, nextPosition.y, nextPosition.z);
+    }
+    if (!initializedRef.current) {
+      camera.lookAt(nextPosition.x, nextPosition.y, nextPosition.z - 1);
+      initializedRef.current = true;
+    }
 
-        const currentPosition = useDesignStore.getState().walkCameraPosition3d;
-        if (hasVector3StateChanged(currentPosition, nextPosition)) {
-            useDesignStore.getState().setWalkCameraPosition3d(nextPosition);
-        }
-    }, [camera, room, walkCameraPosition3d]);
+    const currentPosition = useDesignStore.getState().walkCameraPosition3d;
+    if (hasVector3StateChanged(currentPosition, nextPosition)) {
+      useDesignStore.getState().setWalkCameraPosition3d(nextPosition);
+    }
+  }, [camera, room, walkCameraPosition3d]);
 
-    useEffect(() => {
-        const handleKeyDown = (e: KeyboardEvent) => {
-            const target = e.target as HTMLElement;
-            if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
 
-            switch (e.key.toLowerCase()) {
-                case 'w': setMoveState(s => ({ ...s, forward: true })); break;
-                case 's': setMoveState(s => ({ ...s, backward: true })); break;
-                case 'a': setMoveState(s => ({ ...s, left: true })); break;
-                case 'd': setMoveState(s => ({ ...s, right: true })); break;
-                case 'q': setMoveState(s => ({ ...s, down: true })); break;
-                case 'e': setMoveState(s => ({ ...s, up: true })); break;
-            }
-        };
+      switch (e.key.toLowerCase()) {
+        case 'w': setMoveState(s => ({ ...s, forward: true })); break;
+        case 's': setMoveState(s => ({ ...s, backward: true })); break;
+        case 'a': setMoveState(s => ({ ...s, left: true })); break;
+        case 'd': setMoveState(s => ({ ...s, right: true })); break;
+        case 'q': setMoveState(s => ({ ...s, down: true })); break;
+        case 'e': setMoveState(s => ({ ...s, up: true })); break;
+      }
+    };
 
-        const handleKeyUp = (e: KeyboardEvent) => {
-            switch (e.key.toLowerCase()) {
-                case 'w': setMoveState(s => ({ ...s, forward: false })); break;
-                case 's': setMoveState(s => ({ ...s, backward: false })); break;
-                case 'a': setMoveState(s => ({ ...s, left: false })); break;
-                case 'd': setMoveState(s => ({ ...s, right: false })); break;
-                case 'q': setMoveState(s => ({ ...s, down: false })); break;
-                case 'e': setMoveState(s => ({ ...s, up: false })); break;
-            }
-        };
+    const handleKeyUp = (e: KeyboardEvent) => {
+      switch (e.key.toLowerCase()) {
+        case 'w': setMoveState(s => ({ ...s, forward: false })); break;
+        case 's': setMoveState(s => ({ ...s, backward: false })); break;
+        case 'a': setMoveState(s => ({ ...s, left: false })); break;
+        case 'd': setMoveState(s => ({ ...s, right: false })); break;
+        case 'q': setMoveState(s => ({ ...s, down: false })); break;
+        case 'e': setMoveState(s => ({ ...s, up: false })); break;
+      }
+    };
 
-        document.addEventListener('keydown', handleKeyDown);
-        document.addEventListener('keyup', handleKeyUp);
+    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('keyup', handleKeyUp);
 
-        return () => {
-            document.removeEventListener('keydown', handleKeyDown);
-            document.removeEventListener('keyup', handleKeyUp);
-        };
-    }, []);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('keyup', handleKeyUp);
+    };
+  }, []);
 
-    useFrame((state, delta) => {
-        const speed = 2.5;
-        const cam = camera as THREE.PerspectiveCamera;
-
-
-        direction.current.set(0, 0, -1);
-        direction.current.transformDirection(cam.matrix);
-        direction.current.y = 0;
-        direction.current.normalize();
-
-        const right = new THREE.Vector3();
-        right.crossVectors(direction.current, cam.up).normalize();
+  useFrame((state, delta) => {
+    const speed = 2.5; 
+    const cam = camera as THREE.PerspectiveCamera;
 
 
-        velocity.current.set(0, 0, 0);
-        if (moveState.forward) velocity.current.add(direction.current);
-        if (moveState.backward) velocity.current.sub(direction.current);
-        if (moveState.left) velocity.current.sub(right);
-        if (moveState.right) velocity.current.add(right);
-        if (moveState.up) velocity.current.y += 1;
-        if (moveState.down) velocity.current.y -= 1;
+    direction.current.set(0, 0, -1);
+    direction.current.transformDirection(cam.matrix);
+    direction.current.y = 0;
+    direction.current.normalize();
 
-        velocity.current.normalize().multiplyScalar(speed * delta);
-        cam.position.add(velocity.current);
+    const right = new THREE.Vector3();
+    right.crossVectors(direction.current, cam.up).normalize();
 
-        const nextPosition = clampWalkCameraPosition(
-            { x: cam.position.x, y: cam.position.y, z: cam.position.z },
-            room,
-        );
-        cam.position.set(nextPosition.x, nextPosition.y, nextPosition.z);
 
-        const currentPosition = useDesignStore.getState().walkCameraPosition3d;
-        if (hasVector3StateChanged(currentPosition, nextPosition, 0.01)) {
-            useDesignStore.getState().setWalkCameraPosition3d(nextPosition);
-        }
-    });
+    velocity.current.set(0, 0, 0);
+    if (moveState.forward) velocity.current.add(direction.current);
+    if (moveState.backward) velocity.current.sub(direction.current);
+    if (moveState.left) velocity.current.sub(right);
+    if (moveState.right) velocity.current.add(right);
+    if (moveState.up) velocity.current.y += 1;
+    if (moveState.down) velocity.current.y -= 1;
 
-    return null;
+    velocity.current.normalize().multiplyScalar(speed * delta);
+    cam.position.add(velocity.current);
+
+    const nextPosition = clampWalkCameraPosition(
+      { x: cam.position.x, y: cam.position.y, z: cam.position.z },
+      room,
+    );
+    cam.position.set(nextPosition.x, nextPosition.y, nextPosition.z);
+
+    const currentPosition = useDesignStore.getState().walkCameraPosition3d;
+    if (hasVector3StateChanged(currentPosition, nextPosition, 0.01)) {
+      useDesignStore.getState().setWalkCameraPosition3d(nextPosition);
+    }
+  });
+
+  return null;
 }
 
 function OrbitCameraControls({ camDist }: { camDist: number }) {
-    const controlsRef = useRef<OrbitControlsImpl | null>(null);
-    const { room, orbitTarget3d } = useDesignStore();
+  const controlsRef = useRef<OrbitControlsImpl | null>(null);
+  const { room, orbitTarget3d } = useDesignStore();
 
-    const target = useMemo(
-        () => clampOrbitTarget(orbitTarget3d, room),
-        [orbitTarget3d, room],
+  const target = useMemo(
+    () => clampOrbitTarget(orbitTarget3d, room),
+    [orbitTarget3d, room],
+  );
+
+  useEffect(() => {
+    const controls = controlsRef.current;
+    if (!controls) {
+      return;
+    }
+
+    if (hasVector3StateChanged({ x: controls.target.x, y: controls.target.y, z: controls.target.z }, target)) {
+      controls.target.set(target.x, target.y, target.z);
+      controls.update();
+    }
+
+    const currentTarget = useDesignStore.getState().orbitTarget3d;
+    if (hasVector3StateChanged(currentTarget, target)) {
+      useDesignStore.getState().setOrbitTarget3d(target);
+    }
+  }, [target]);
+
+  const handleControlsChange = useCallback(() => {
+    const controls = controlsRef.current;
+    if (!controls) {
+      return;
+    }
+
+    const nextTarget = clampOrbitTarget(
+      { x: controls.target.x, y: controls.target.y, z: controls.target.z },
+      useDesignStore.getState().room,
     );
 
-    useEffect(() => {
-        const controls = controlsRef.current;
-        if (!controls) {
-            return;
-        }
+    if (hasVector3StateChanged({ x: controls.target.x, y: controls.target.y, z: controls.target.z }, nextTarget)) {
+      controls.target.set(nextTarget.x, nextTarget.y, nextTarget.z);
+      controls.update();
+    }
 
-        if (hasVector3StateChanged({ x: controls.target.x, y: controls.target.y, z: controls.target.z }, target)) {
-            controls.target.set(target.x, target.y, target.z);
-            controls.update();
-        }
+    const currentTarget = useDesignStore.getState().orbitTarget3d;
+    if (hasVector3StateChanged(currentTarget, nextTarget, 0.01)) {
+      useDesignStore.getState().setOrbitTarget3d(nextTarget);
+    }
+  }, []);
 
-        const currentTarget = useDesignStore.getState().orbitTarget3d;
-        if (hasVector3StateChanged(currentTarget, target)) {
-            useDesignStore.getState().setOrbitTarget3d(target);
-        }
-    }, [target]);
-
-    const handleControlsChange = useCallback(() => {
-        const controls = controlsRef.current;
-        if (!controls) {
-            return;
-        }
-
-        const nextTarget = clampOrbitTarget(
-            { x: controls.target.x, y: controls.target.y, z: controls.target.z },
-            useDesignStore.getState().room,
-        );
-
-        if (hasVector3StateChanged({ x: controls.target.x, y: controls.target.y, z: controls.target.z }, nextTarget)) {
-            controls.target.set(nextTarget.x, nextTarget.y, nextTarget.z);
-            controls.update();
-        }
-
-        const currentTarget = useDesignStore.getState().orbitTarget3d;
-        if (hasVector3StateChanged(currentTarget, nextTarget, 0.01)) {
-            useDesignStore.getState().setOrbitTarget3d(nextTarget);
-        }
-    }, []);
-
-    return (
-        <OrbitControls
-            ref={controlsRef}
-            target={[target.x, target.y, target.z]}
-            maxPolarAngle={Math.PI / 2.02}
-            minDistance={0.3}
-            maxDistance={camDist * 5}
-            enableDamping
-            dampingFactor={0.06}
-            rotateSpeed={0.5}
-            panSpeed={0.5}
-            makeDefault
-            onChange={handleControlsChange}
-        />
-    );
+  return (
+    <OrbitControls
+      ref={controlsRef}
+      target={[target.x, target.y, target.z]}
+      maxPolarAngle={Math.PI / 2.02}
+      minDistance={0.3}
+      maxDistance={camDist * 5}
+      enableDamping
+      dampingFactor={0.06}
+      rotateSpeed={0.5}
+      panSpeed={0.5}
+      makeDefault
+      onChange={handleControlsChange}
+    />
+  );
 }
 
 
 function MouseLookControls() {
-    const { camera } = useThree();
-    const [isLocked, setIsLocked] = useState(false);
-    const euler = useRef(new THREE.Euler(0, 0, 0, 'YXZ'));
-    const PI_2 = Math.PI / 2;
+  const { camera } = useThree();
+  const [isLocked, setIsLocked] = useState(false);
+  const euler = useRef(new THREE.Euler(0, 0, 0, 'YXZ'));
+  const PI_2 = Math.PI / 2;
 
-    useEffect(() => {
-        const onMouseMove = (e: MouseEvent) => {
-            if (!isLocked) return;
+  useEffect(() => {
+    const onMouseMove = (e: MouseEvent) => {
+      if (!isLocked) return;
 
-            const movementX = e.movementX || 0;
-            const movementY = e.movementY || 0;
+      const movementX = e.movementX || 0;
+      const movementY = e.movementY || 0;
 
-            euler.current.setFromQuaternion(camera.quaternion);
-            euler.current.y -= movementX * 0.002;
-            euler.current.x -= movementY * 0.002;
-            euler.current.x = Math.max(-PI_2, Math.min(PI_2, euler.current.x));
-            camera.quaternion.setFromEuler(euler.current);
-        };
+      euler.current.setFromQuaternion(camera.quaternion);
+      euler.current.y -= movementX * 0.002;
+      euler.current.x -= movementY * 0.002;
+      euler.current.x = Math.max(-PI_2, Math.min(PI_2, euler.current.x));
+      camera.quaternion.setFromEuler(euler.current);
+    };
 
-        const onPointerLockChange = () => {
-            setIsLocked(document.pointerLockElement !== null);
-        };
+    const onPointerLockChange = () => {
+      setIsLocked(document.pointerLockElement !== null);
+    };
 
-        document.addEventListener('mousemove', onMouseMove);
-        document.addEventListener('pointerlockchange', onPointerLockChange);
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('pointerlockchange', onPointerLockChange);
 
-        return () => {
-            document.removeEventListener('mousemove', onMouseMove);
-            document.removeEventListener('pointerlockchange', onPointerLockChange);
-        };
-    }, [camera, isLocked]);
+    return () => {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('pointerlockchange', onPointerLockChange);
+    };
+  }, [camera, isLocked]);
 
-    return null;
+  return null;
 }
 
 function CeilingLight({ wallH }: { wallH: number }) {
-    const { room } = useDesignStore();
-    const on = room.lightsOn;
-    return (
-        <group>
-            <mesh position={[0, wallH - 0.02, 0]}>
-                <cylinderGeometry args={[0.15, 0.15, 0.02, 32]} />
-                <meshStandardMaterial
-                    color={on ? "#fff" : "#888"}
-                    emissive={on ? "#fff8e0" : "#000"}
-                    emissiveIntensity={on ? 0.6 : 0}
-                />
-            </mesh>
-            {on && (
-                <mesh position={[0, wallH - 0.06, 0]}>
-                    <sphereGeometry args={[0.08, 16, 16]} />
-                    <meshStandardMaterial
-                        color="#fffbe6"
-                        emissive="#fff8c4"
-                        emissiveIntensity={1.5}
-                        transparent
-                        opacity={0.5}
-                    />
-                </mesh>
-            )}
-        </group>
-    );
+  const { room } = useDesignStore();
+  const on = room.lightsOn;
+  return (
+    <group>
+      <mesh position={[0, wallH - 0.02, 0]}>
+        <cylinderGeometry args={[0.15, 0.15, 0.02, 32]} />
+        <meshStandardMaterial
+          color={on ? "#fff" : "#888"}
+          emissive={on ? "#fff8e0" : "#000"}
+          emissiveIntensity={on ? 0.6 : 0}
+        />
+      </mesh>
+      {on && (
+        <mesh position={[0, wallH - 0.06, 0]}>
+          <sphereGeometry args={[0.08, 16, 16]} />
+          <meshStandardMaterial
+            color="#fffbe6"
+            emissive="#fff8c4"
+            emissiveIntensity={1.5}
+            transparent
+            opacity={0.5}
+          />
+        </mesh>
+      )}
+    </group>
+  );
 }
 
 function CozyWallOverlay({
-    size,
-    position,
-    rotation = [0, 0, 0],
+  size,
+  position,
+  rotation = [0, 0, 0],
 }: {
-    size: [number, number];
-    position: [number, number, number];
-    rotation?: [number, number, number];
+  size: [number, number];
+  position: [number, number, number];
+  rotation?: [number, number, number];
 }) {
-    const uniforms = useMemo(
-        () => ({
-            uTint: { value: new THREE.Color("#f3be8f") },
-        }),
-        []
-    );
+  const uniforms = useMemo(
+    () => ({
+      uTint: { value: new THREE.Color("#f3be8f") },
+    }),
+    []
+  );
 
-    return (
-        <mesh position={position} rotation={rotation} renderOrder={1}>
-            <planeGeometry args={size} />
-            <shaderMaterial
-                uniforms={uniforms}
-                vertexShader={`
+  return (
+    <mesh position={position} rotation={rotation} renderOrder={1}>
+      <planeGeometry args={size} />
+      <shaderMaterial
+        uniforms={uniforms}
+        vertexShader={`
           varying vec2 vUv;
 
           void main() {
@@ -438,7 +520,7 @@ function CozyWallOverlay({
             gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
           }
         `}
-                fragmentShader={`
+        fragmentShader={`
           varying vec2 vUv;
           uniform vec3 uTint;
 
@@ -456,982 +538,1292 @@ function CozyWallOverlay({
             gl_FragColor = vec4(color, alpha);
           }
         `}
-                transparent
-                depthWrite={false}
-                blending={THREE.AdditiveBlending}
-                side={THREE.FrontSide}
-                toneMapped={false}
-            />
-        </mesh>
-    );
+        transparent
+        depthWrite={false}
+        blending={THREE.AdditiveBlending}
+        side={THREE.FrontSide}
+        toneMapped={false}
+      />
+    </mesh>
+  );
 }
 
 function Room() {
-    const { room } = useDesignStore();
-    const w = room.width / 100;
-    const h = room.height / 100;
-    const wallH = room.wallHeight / 100;
-    const gridSize = room.gridSize / 100;
-    const isCozy = room.renderProfile === "cozy";
+  const { room } = useDesignStore();
+  const w = room.width / 100;
+  const h = room.height / 100;
+  const wallH = room.wallHeight / 100;
+  const gridSize = room.gridSize / 100;
+  const isCozy = room.renderProfile === "cozy";
 
-    const wallColor = hexToColor(room.wallColor);
-    const floorColor = hexToColor(room.floorColor);
-    const ceilingColor = hexToColor(room.ceilingColor);
+  const wallColor = hexToColor(room.wallColor);
+  const floorColor = hexToColor(room.floorColor);
+  const ceilingColor = hexToColor(room.ceilingColor);
 
-    return (
-        <group>
-            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]}>
-                <planeGeometry args={[w, h]} />
-                <MeshReflectorMaterial
-                    color={floorColor}
-                    blur={[300, 100]}
-                    resolution={512}
-                    mixBlur={isCozy ? 0.9 : 0.8}
-                    mixStrength={isCozy ? 0.5 : 0.4}
-                    roughness={isCozy ? 0.64 : 0.7}
-                    depthScale={0.8}
-                    minDepthThreshold={0.4}
-                    maxDepthThreshold={1}
-                    metalness={0.1}
-                    mirror={isCozy ? 0.2 : 0.3}
-                />
-            </mesh>
+  return (
+    <group>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]}>
+        <planeGeometry args={[w, h]} />
+        <MeshReflectorMaterial
+          color={floorColor}
+          blur={[300, 100]}
+          resolution={512}
+          mixBlur={isCozy ? 0.9 : 0.8}
+          mixStrength={isCozy ? 0.5 : 0.4}
+          roughness={isCozy ? 0.64 : 0.7}
+          depthScale={0.8}
+          minDepthThreshold={0.4}
+          maxDepthThreshold={1}
+          metalness={0.1}
+          mirror={isCozy ? 0.2 : 0.3}
+        />
+      </mesh>
 
-            {isCozy && (
-                <mesh position={[0, 0.006, -h * 0.04]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={1}>
-                    <circleGeometry args={[Math.max(w, h) * 0.34, 64]} />
-                    <meshBasicMaterial
-                        color="#ffc28f"
-                        transparent
-                        opacity={0.045}
-                        depthWrite={false}
-                        blending={THREE.AdditiveBlending}
-                        toneMapped={false}
-                    />
-                </mesh>
-            )}
+      {isCozy && (
+        <mesh position={[0, 0.006, -h * 0.04]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={1}>
+          <circleGeometry args={[Math.max(w, h) * 0.34, 64]} />
+          <meshBasicMaterial
+            color="#ffc28f"
+            transparent
+            opacity={0.045}
+            depthWrite={false}
+            blending={THREE.AdditiveBlending}
+            toneMapped={false}
+          />
+        </mesh>
+      )}
 
 
-            {room.showGrid && (
-                <group position={[0, 0.001, 0]}>
-                    {Array.from({ length: Math.floor(w / gridSize) + 1 }).map((_, i) => {
-                        const x = -w / 2 + i * gridSize;
-                        const isMajor = i % 4 === 0;
-                        return (
-                            <Line
-                                key={`v-${i}`}
-                                points={[
-                                    [x, 0, -h / 2],
-                                    [x, 0, h / 2],
-                                ]}
-                                color={
-                                    isMajor
-                                        ? isCozy
-                                            ? "rgba(255,245,232,0.22)"
-                                            : "rgba(255,255,255,0.2)"
-                                        : isCozy
-                                            ? "rgba(255,234,215,0.11)"
-                                            : "rgba(255,255,255,0.1)"
-                                }
-                                lineWidth={isMajor ? 1.5 : 1}
-                            />
-                        );
-                    })}
+      {room.showGrid && (
+        <group position={[0, 0.001, 0]}>
+          {Array.from({ length: Math.floor(w / gridSize) + 1 }).map((_, i) => {
+            const x = -w / 2 + i * gridSize;
+            const isMajor = i % 4 === 0;
+            return (
+              <Line
+                key={`v-${i}`}
+                points={[
+                  [x, 0, -h / 2],
+                  [x, 0, h / 2],
+                ]}
+                color={
+                  isMajor
+                    ? isCozy
+                      ? "rgba(255,245,232,0.22)"
+                      : "rgba(255,255,255,0.2)"
+                    : isCozy
+                      ? "rgba(255,234,215,0.11)"
+                      : "rgba(255,255,255,0.1)"
+                }
+                lineWidth={isMajor ? 1.5 : 1}
+              />
+            );
+          })}
 
-                    {Array.from({ length: Math.floor(h / gridSize) + 1 }).map((_, i) => {
-                        const z = -h / 2 + i * gridSize;
-                        const isMajor = i % 4 === 0;
-                        return (
-                            <Line
-                                key={`h-${i}`}
-                                points={[
-                                    [-w / 2, 0, z],
-                                    [w / 2, 0, z],
-                                ]}
-                                color={
-                                    isMajor
-                                        ? isCozy
-                                            ? "rgba(255,245,232,0.22)"
-                                            : "rgba(255,255,255,0.2)"
-                                        : isCozy
-                                            ? "rgba(255,234,215,0.11)"
-                                            : "rgba(255,255,255,0.1)"
-                                }
-                                lineWidth={isMajor ? 1.5 : 1}
-                            />
-                        );
-                    })}
-                </group>
-            )}
-
-            <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, wallH, 0]}>
-                <planeGeometry args={[w, h]} />
-                <meshStandardMaterial color={ceilingColor} roughness={isCozy ? 0.88 : 0.95} side={THREE.DoubleSide} />
-            </mesh>
-
-            <mesh position={[0, wallH / 2, -h / 2]} receiveShadow>
-                <planeGeometry args={[w, wallH]} />
-                <meshPhysicalMaterial
-                    color={wallColor}
-                    roughness={isCozy ? 0.72 : 0.85}
-                    clearcoat={isCozy ? 0.14 : 0.05}
-                    side={THREE.DoubleSide}
-                />
-            </mesh>
-
-            <mesh position={[-w / 2, wallH / 2, 0]} rotation={[0, Math.PI / 2, 0]} receiveShadow>
-                <planeGeometry args={[h, wallH]} />
-                <meshPhysicalMaterial
-                    color={wallColor}
-                    roughness={isCozy ? 0.72 : 0.85}
-                    clearcoat={isCozy ? 0.14 : 0.05}
-                    side={THREE.DoubleSide}
-                />
-            </mesh>
-
-            <mesh position={[w / 2, wallH / 2, 0]} rotation={[0, -Math.PI / 2, 0]} receiveShadow>
-                <planeGeometry args={[h, wallH]} />
-                <meshPhysicalMaterial
-                    color={wallColor}
-                    roughness={isCozy ? 0.72 : 0.85}
-                    clearcoat={isCozy ? 0.14 : 0.05}
-                    side={THREE.DoubleSide}
-                />
-            </mesh>
-
-            {isCozy && (
-                <>
-                    <CozyWallOverlay size={[w, wallH]} position={[0, wallH / 2, -h / 2 + 0.001]} />
-                    <CozyWallOverlay size={[h, wallH]} position={[-w / 2 + 0.001, wallH / 2, 0]} rotation={[0, Math.PI / 2, 0]} />
-                    <CozyWallOverlay size={[h, wallH]} position={[w / 2 - 0.001, wallH / 2, 0]} rotation={[0, -Math.PI / 2, 0]} />
-                </>
-            )}
-
-            {[
-                [0, 0.04, -h / 2 + 0.005, w, 0.08, 0.01],
-                [-w / 2 + 0.005, 0.04, 0, 0.01, 0.08, h],
-                [w / 2 - 0.005, 0.04, 0, 0.01, 0.08, h],
-            ].map(([px, py, pz, sx, sy, sz], i) => (
-                <mesh key={i} position={[px as number, py as number, pz as number]} castShadow>
-                    <boxGeometry args={[sx as number, sy as number, sz as number]} />
-                    <meshStandardMaterial color="#ddd" roughness={0.35} metalness={0.05} />
-                </mesh>
-            ))}
-
-            <CeilingLight wallH={wallH} />
+          {Array.from({ length: Math.floor(h / gridSize) + 1 }).map((_, i) => {
+            const z = -h / 2 + i * gridSize;
+            const isMajor = i % 4 === 0;
+            return (
+              <Line
+                key={`h-${i}`}
+                points={[
+                  [-w / 2, 0, z],
+                  [w / 2, 0, z],
+                ]}
+                color={
+                  isMajor
+                    ? isCozy
+                      ? "rgba(255,245,232,0.22)"
+                      : "rgba(255,255,255,0.2)"
+                    : isCozy
+                      ? "rgba(255,234,215,0.11)"
+                      : "rgba(255,255,255,0.1)"
+                }
+                lineWidth={isMajor ? 1.5 : 1}
+              />
+            );
+          })}
         </group>
-    );
+      )}
+
+      <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, wallH, 0]}>
+        <planeGeometry args={[w, h]} />
+        <meshStandardMaterial color={ceilingColor} roughness={isCozy ? 0.88 : 0.95} side={THREE.DoubleSide} />
+      </mesh>
+
+      <mesh position={[0, wallH / 2, -h / 2]} receiveShadow>
+        <planeGeometry args={[w, wallH]} />
+        <meshPhysicalMaterial
+          color={wallColor}
+          roughness={isCozy ? 0.72 : 0.85}
+          clearcoat={isCozy ? 0.14 : 0.05}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+
+      <mesh position={[-w / 2, wallH / 2, 0]} rotation={[0, Math.PI / 2, 0]} receiveShadow>
+        <planeGeometry args={[h, wallH]} />
+        <meshPhysicalMaterial
+          color={wallColor}
+          roughness={isCozy ? 0.72 : 0.85}
+          clearcoat={isCozy ? 0.14 : 0.05}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+
+      <mesh position={[w / 2, wallH / 2, 0]} rotation={[0, -Math.PI / 2, 0]} receiveShadow>
+        <planeGeometry args={[h, wallH]} />
+        <meshPhysicalMaterial
+          color={wallColor}
+          roughness={isCozy ? 0.72 : 0.85}
+          clearcoat={isCozy ? 0.14 : 0.05}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+
+      {isCozy && (
+        <>
+          <CozyWallOverlay size={[w, wallH]} position={[0, wallH / 2, -h / 2 + 0.001]} />
+          <CozyWallOverlay size={[h, wallH]} position={[-w / 2 + 0.001, wallH / 2, 0]} rotation={[0, Math.PI / 2, 0]} />
+          <CozyWallOverlay size={[h, wallH]} position={[w / 2 - 0.001, wallH / 2, 0]} rotation={[0, -Math.PI / 2, 0]} />
+        </>
+      )}
+
+      {[
+        [0, 0.04, -h / 2 + 0.005, w, 0.08, 0.01],
+        [-w / 2 + 0.005, 0.04, 0, 0.01, 0.08, h],
+        [w / 2 - 0.005, 0.04, 0, 0.01, 0.08, h],
+      ].map(([px, py, pz, sx, sy, sz], i) => (
+        <mesh key={i} position={[px as number, py as number, pz as number]} castShadow>
+          <boxGeometry args={[sx as number, sy as number, sz as number]} />
+          <meshStandardMaterial color="#ddd" roughness={0.35} metalness={0.05} />
+        </mesh>
+      ))}
+
+      <CeilingLight wallH={wallH} />
+    </group>
+  );
 }
 
 
 function FloorLamp3D({ color, opacity }: { color: THREE.Color; opacity: number }) {
-    return (
-        <group>
-            <mesh position={[0, 0.02, 0]} castShadow receiveShadow>
-                <cylinderGeometry args={[0.12, 0.15, 0.04, 32]} />
-                <meshPhysicalMaterial color={color} roughness={0.3} metalness={0.5} transparent={opacity < 1} opacity={opacity} />
-            </mesh>
-            <mesh position={[0, 0.8, 0]} castShadow>
-                <cylinderGeometry args={[0.015, 0.015, 1.5, 12]} />
-                <meshPhysicalMaterial color={color} roughness={0.2} metalness={0.6} transparent={opacity < 1} opacity={opacity} />
-            </mesh>
-            <mesh position={[0, 1.6, 0]} castShadow>
-                <coneGeometry args={[0.18, 0.28, 32]} />
-                <meshPhysicalMaterial color="#f5f5dc" roughness={0.6} transparent={opacity < 1} opacity={opacity} />
-            </mesh>
-            <pointLight position={[0, 1.5, 0]} intensity={0.5} color="#fff5e6" distance={3} decay={2} />
-        </group>
-    );
+  return (
+    <group>
+      <mesh position={[0, 0.02, 0]} castShadow receiveShadow>
+        <cylinderGeometry args={[0.12, 0.15, 0.04, 32]} />
+        <meshPhysicalMaterial color={color} roughness={0.3} metalness={0.5} transparent={opacity < 1} opacity={opacity} />
+      </mesh>
+      <mesh position={[0, 0.8, 0]} castShadow>
+        <cylinderGeometry args={[0.015, 0.015, 1.5, 12]} />
+        <meshPhysicalMaterial color={color} roughness={0.2} metalness={0.6} transparent={opacity < 1} opacity={opacity} />
+      </mesh>
+      <mesh position={[0, 1.6, 0]} castShadow>
+        <coneGeometry args={[0.18, 0.28, 32]} />
+        <meshPhysicalMaterial color="#f5f5dc" roughness={0.6} transparent={opacity < 1} opacity={opacity} />
+      </mesh>
+      <pointLight position={[0, 1.5, 0]} intensity={0.5} color="#fff5e6" distance={3} decay={2} />
+    </group>
+  );
 }
 
 function TableLamp3D({ color, opacity }: { color: THREE.Color; opacity: number }) {
-    return (
-        <group>
-            <mesh position={[0, 0.02, 0]} castShadow receiveShadow>
-                <cylinderGeometry args={[0.06, 0.08, 0.04, 24]} />
-                <meshPhysicalMaterial color={color} roughness={0.3} metalness={0.5} transparent={opacity < 1} opacity={opacity} />
-            </mesh>
-            <mesh position={[0, 0.18, 0]} castShadow>
-                <cylinderGeometry args={[0.012, 0.012, 0.3, 12]} />
-                <meshPhysicalMaterial color="#c0c0c0" roughness={0.2} metalness={0.6} transparent={opacity < 1} opacity={opacity} />
-            </mesh>
-            <mesh position={[0, 0.35, 0]} castShadow>
-                <coneGeometry args={[0.12, 0.16, 32]} />
-                <meshPhysicalMaterial color="#f5f5dc" roughness={0.6} transparent={opacity < 1} opacity={opacity} />
-            </mesh>
-            <pointLight position={[0, 0.3, 0]} intensity={0.3} color="#fff5e6" distance={2} decay={2} />
-        </group>
-    );
+  return (
+    <group>
+      <mesh position={[0, 0.02, 0]} castShadow receiveShadow>
+        <cylinderGeometry args={[0.06, 0.08, 0.04, 24]} />
+        <meshPhysicalMaterial color={color} roughness={0.3} metalness={0.5} transparent={opacity < 1} opacity={opacity} />
+      </mesh>
+      <mesh position={[0, 0.18, 0]} castShadow>
+        <cylinderGeometry args={[0.012, 0.012, 0.3, 12]} />
+        <meshPhysicalMaterial color="#c0c0c0" roughness={0.2} metalness={0.6} transparent={opacity < 1} opacity={opacity} />
+      </mesh>
+      <mesh position={[0, 0.35, 0]} castShadow>
+        <coneGeometry args={[0.12, 0.16, 32]} />
+        <meshPhysicalMaterial color="#f5f5dc" roughness={0.6} transparent={opacity < 1} opacity={opacity} />
+      </mesh>
+      <pointLight position={[0, 0.3, 0]} intensity={0.3} color="#fff5e6" distance={2} decay={2} />
+    </group>
+  );
 }
 
 function Rug3D({ w3d, h3d, color, opacity }: { w3d: number; h3d: number; color: THREE.Color; opacity: number }) {
-    return (
-        <mesh position={[0, 0.005, 0]} receiveShadow rotation={[-Math.PI / 2, 0, 0]}>
-            <planeGeometry args={[w3d, h3d]} />
-            <meshStandardMaterial color={color} side={THREE.DoubleSide} transparent={opacity < 1} opacity={opacity} roughness={0.9} />
-        </mesh>
-    );
+  return (
+    <mesh position={[0, 0.005, 0]} receiveShadow rotation={[-Math.PI / 2, 0, 0]}>
+      <planeGeometry args={[w3d, h3d]} />
+      <meshStandardMaterial color={color} side={THREE.DoubleSide} transparent={opacity < 1} opacity={opacity} roughness={0.9} />
+    </mesh>
+  );
 }
 
 function Plant3D({ color, opacity }: { color: THREE.Color; opacity: number }) {
-    return (
-        <group>
-            <mesh position={[0, 0.12, 0]} castShadow receiveShadow>
-                <cylinderGeometry args={[0.09, 0.07, 0.24, 16]} />
-                <meshPhysicalMaterial color="#8B4513" roughness={0.8} transparent={opacity < 1} opacity={opacity} />
-            </mesh>
-            <mesh position={[0, 0.35, 0]} castShadow>
-                <sphereGeometry args={[0.18, 16, 16]} />
-                <meshPhysicalMaterial color={color} roughness={0.7} transparent={opacity < 1} opacity={opacity} />
-            </mesh>
-            <mesh position={[0.08, 0.45, 0.05]} castShadow>
-                <sphereGeometry args={[0.1, 12, 12]} />
-                <meshPhysicalMaterial color={color} roughness={0.7} transparent={opacity < 1} opacity={opacity} />
-            </mesh>
-            <mesh position={[-0.06, 0.48, -0.04]} castShadow>
-                <sphereGeometry args={[0.08, 12, 12]} />
-                <meshPhysicalMaterial color={color} roughness={0.7} transparent={opacity < 1} opacity={opacity} />
-            </mesh>
-        </group>
-    );
+  return (
+    <group>
+      <mesh position={[0, 0.12, 0]} castShadow receiveShadow>
+        <cylinderGeometry args={[0.09, 0.07, 0.24, 16]} />
+        <meshPhysicalMaterial color="#8B4513" roughness={0.8} transparent={opacity < 1} opacity={opacity} />
+      </mesh>
+      <mesh position={[0, 0.35, 0]} castShadow>
+        <sphereGeometry args={[0.18, 16, 16]} />
+        <meshPhysicalMaterial color={color} roughness={0.7} transparent={opacity < 1} opacity={opacity} />
+      </mesh>
+      <mesh position={[0.08, 0.45, 0.05]} castShadow>
+        <sphereGeometry args={[0.1, 12, 12]} />
+        <meshPhysicalMaterial color={color} roughness={0.7} transparent={opacity < 1} opacity={opacity} />
+      </mesh>
+      <mesh position={[-0.06, 0.48, -0.04]} castShadow>
+        <sphereGeometry args={[0.08, 12, 12]} />
+        <meshPhysicalMaterial color={color} roughness={0.7} transparent={opacity < 1} opacity={opacity} />
+      </mesh>
+    </group>
+  );
 }
 
 function Wardrobe3D({ w3d, h3d, d3d, color, opacity }: { w3d: number; h3d: number; d3d: number; color: THREE.Color; opacity: number }) {
-    return (
-        <group>
-            <mesh position={[0, d3d / 2, 0]} castShadow receiveShadow>
-                <boxGeometry args={[w3d, d3d, h3d]} />
-                <meshPhysicalMaterial color={color} roughness={0.6} transparent={opacity < 1} opacity={opacity} />
-            </mesh>
-            <mesh position={[0, d3d / 2, h3d / 2 + 0.005]}>
-                <boxGeometry args={[0.015, d3d * 0.85, 0.015]} />
-                <meshStandardMaterial color="#111" roughness={0.2} metalness={0.6} />
-            </mesh>
-            <mesh position={[-w3d * 0.2, d3d * 0.5, h3d / 2 + 0.01]}>
-                <sphereGeometry args={[0.02, 12, 12]} />
-                <meshStandardMaterial color="#222" roughness={0.15} metalness={0.7} />
-            </mesh>
-            <mesh position={[w3d * 0.2, d3d * 0.5, h3d / 2 + 0.01]}>
-                <sphereGeometry args={[0.02, 12, 12]} />
-                <meshStandardMaterial color="#222" roughness={0.15} metalness={0.7} />
-            </mesh>
-        </group>
-    );
+  return (
+    <group>
+      <mesh position={[0, d3d / 2, 0]} castShadow receiveShadow>
+        <boxGeometry args={[w3d, d3d, h3d]} />
+        <meshPhysicalMaterial color={color} roughness={0.6} transparent={opacity < 1} opacity={opacity} />
+      </mesh>
+      <mesh position={[0, d3d / 2, h3d / 2 + 0.005]}>
+        <boxGeometry args={[0.015, d3d * 0.85, 0.015]} />
+        <meshStandardMaterial color="#111" roughness={0.2} metalness={0.6} />
+      </mesh>
+      <mesh position={[-w3d * 0.2, d3d * 0.5, h3d / 2 + 0.01]}>
+        <sphereGeometry args={[0.02, 12, 12]} />
+        <meshStandardMaterial color="#222" roughness={0.15} metalness={0.7} />
+      </mesh>
+      <mesh position={[w3d * 0.2, d3d * 0.5, h3d / 2 + 0.01]}>
+        <sphereGeometry args={[0.02, 12, 12]} />
+        <meshStandardMaterial color="#222" roughness={0.15} metalness={0.7} />
+      </mesh>
+    </group>
+  );
 }
 
 function Bookshelf3D({ w3d, h3d, d3d, color, opacity }: { w3d: number; h3d: number; d3d: number; color: THREE.Color; opacity: number }) {
-    const shelfCount = Math.max(3, Math.round(d3d / 0.35));
-    return (
-        <group>
-            <mesh position={[-w3d / 2 + 0.02, d3d / 2, 0]} castShadow receiveShadow>
-                <boxGeometry args={[0.03, d3d, h3d]} />
-                <meshPhysicalMaterial color={color} roughness={0.6} transparent={opacity < 1} opacity={opacity} />
-            </mesh>
-            <mesh position={[w3d / 2 - 0.02, d3d / 2, 0]} castShadow receiveShadow>
-                <boxGeometry args={[0.03, d3d, h3d]} />
-                <meshPhysicalMaterial color={color} roughness={0.6} transparent={opacity < 1} opacity={opacity} />
-            </mesh>
-            {Array.from({ length: shelfCount }).map((_, i) => {
-                const y = (i / (shelfCount - 1)) * d3d;
-                return (
-                    <mesh key={i} position={[0, y, 0]} castShadow receiveShadow>
-                        <boxGeometry args={[w3d - 0.02, 0.025, h3d]} />
-                        <meshPhysicalMaterial color={color} roughness={0.6} transparent={opacity < 1} opacity={opacity} />
-                    </mesh>
-                );
-            })}
-            <mesh position={[0, d3d / 2, -h3d / 2 + 0.01]} receiveShadow>
-                <boxGeometry args={[w3d - 0.02, d3d, 0.015]} />
-                <meshPhysicalMaterial color={color} roughness={0.6} transparent={opacity < 1} opacity={opacity} />
-            </mesh>
-        </group>
-    );
+  const shelfCount = Math.max(3, Math.round(d3d / 0.35));
+  return (
+    <group>
+      <mesh position={[-w3d / 2 + 0.02, d3d / 2, 0]} castShadow receiveShadow>
+        <boxGeometry args={[0.03, d3d, h3d]} />
+        <meshPhysicalMaterial color={color} roughness={0.6} transparent={opacity < 1} opacity={opacity} />
+      </mesh>
+      <mesh position={[w3d / 2 - 0.02, d3d / 2, 0]} castShadow receiveShadow>
+        <boxGeometry args={[0.03, d3d, h3d]} />
+        <meshPhysicalMaterial color={color} roughness={0.6} transparent={opacity < 1} opacity={opacity} />
+      </mesh>
+      {Array.from({ length: shelfCount }).map((_, i) => {
+        const y = (i / (shelfCount - 1)) * d3d;
+        return (
+          <mesh key={i} position={[0, y, 0]} castShadow receiveShadow>
+            <boxGeometry args={[w3d - 0.02, 0.025, h3d]} />
+            <meshPhysicalMaterial color={color} roughness={0.6} transparent={opacity < 1} opacity={opacity} />
+          </mesh>
+        );
+      })}
+      <mesh position={[0, d3d / 2, -h3d / 2 + 0.01]} receiveShadow>
+        <boxGeometry args={[w3d - 0.02, d3d, 0.015]} />
+        <meshPhysicalMaterial color={color} roughness={0.6} transparent={opacity < 1} opacity={opacity} />
+      </mesh>
+    </group>
+  );
 }
 
 function Bed3D({ w3d, h3d, d3d, color, opacity }: { w3d: number; h3d: number; d3d: number; color: THREE.Color; opacity: number }) {
-    return (
-        <group>
-            <mesh position={[0, 0.15, 0]} castShadow receiveShadow>
-                <boxGeometry args={[w3d, 0.3, h3d]} />
-                <meshPhysicalMaterial color="#8B4513" roughness={0.7} transparent={opacity < 1} opacity={opacity} />
-            </mesh>
-            <mesh position={[0, 0.38, 0]} castShadow receiveShadow>
-                <boxGeometry args={[w3d * 0.95, 0.15, h3d * 0.95]} />
-                <meshPhysicalMaterial color={color} roughness={0.8} transparent={opacity < 1} opacity={opacity} />
-            </mesh>
-            <mesh position={[0, 0.55, -h3d / 2 + 0.04]} castShadow>
-                <boxGeometry args={[w3d, 0.6, 0.08]} />
-                <meshPhysicalMaterial color="#8B4513" roughness={0.7} transparent={opacity < 1} opacity={opacity} />
-            </mesh>
-            <mesh position={[-w3d * 0.25, 0.52, -h3d * 0.35]} castShadow>
-                <boxGeometry args={[w3d * 0.3, 0.1, h3d * 0.18]} />
-                <meshStandardMaterial color="#ffffff" roughness={0.85} transparent={opacity < 1} opacity={opacity} />
-            </mesh>
-            <mesh position={[w3d * 0.25, 0.52, -h3d * 0.35]} castShadow>
-                <boxGeometry args={[w3d * 0.3, 0.1, h3d * 0.18]} />
-                <meshStandardMaterial color="#ffffff" roughness={0.85} transparent={opacity < 1} opacity={opacity} />
-            </mesh>
-        </group>
-    );
+  return (
+    <group>
+      <mesh position={[0, 0.15, 0]} castShadow receiveShadow>
+        <boxGeometry args={[w3d, 0.3, h3d]} />
+        <meshPhysicalMaterial color="#8B4513" roughness={0.7} transparent={opacity < 1} opacity={opacity} />
+      </mesh>
+      <mesh position={[0, 0.38, 0]} castShadow receiveShadow>
+        <boxGeometry args={[w3d * 0.95, 0.15, h3d * 0.95]} />
+        <meshPhysicalMaterial color={color} roughness={0.8} transparent={opacity < 1} opacity={opacity} />
+      </mesh>
+      <mesh position={[0, 0.55, -h3d / 2 + 0.04]} castShadow>
+        <boxGeometry args={[w3d, 0.6, 0.08]} />
+        <meshPhysicalMaterial color="#8B4513" roughness={0.7} transparent={opacity < 1} opacity={opacity} />
+      </mesh>
+      <mesh position={[-w3d * 0.25, 0.52, -h3d * 0.35]} castShadow>
+        <boxGeometry args={[w3d * 0.3, 0.1, h3d * 0.18]} />
+        <meshStandardMaterial color="#ffffff" roughness={0.85} transparent={opacity < 1} opacity={opacity} />
+      </mesh>
+      <mesh position={[w3d * 0.25, 0.52, -h3d * 0.35]} castShadow>
+        <boxGeometry args={[w3d * 0.3, 0.1, h3d * 0.18]} />
+        <meshStandardMaterial color="#ffffff" roughness={0.85} transparent={opacity < 1} opacity={opacity} />
+      </mesh>
+    </group>
+  );
 }
 
 function Desk3D({ w3d, h3d, d3d, color, opacity }: { w3d: number; h3d: number; d3d: number; color: THREE.Color; opacity: number }) {
-    return (
-        <group>
-            <mesh position={[0, d3d * 0.9, 0]} castShadow receiveShadow>
-                <boxGeometry args={[w3d, 0.04, h3d]} />
-                <meshPhysicalMaterial color={color} roughness={0.5} transparent={opacity < 1} opacity={opacity} />
-            </mesh>
-            <mesh position={[-w3d * 0.38, d3d * 0.45, 0]} castShadow>
-                <boxGeometry args={[w3d * 0.22, d3d * 0.88, h3d * 0.92]} />
-                <meshPhysicalMaterial color={color} roughness={0.55} transparent={opacity < 1} opacity={opacity} />
-            </mesh>
-            <mesh position={[w3d * 0.42, d3d * 0.45, h3d * 0.4]} castShadow>
-                <boxGeometry args={[0.04, d3d * 0.88, 0.04]} />
-                <meshPhysicalMaterial color={color} roughness={0.5} transparent={opacity < 1} opacity={opacity} />
-            </mesh>
-            <mesh position={[w3d * 0.42, d3d * 0.45, -h3d * 0.4]} castShadow>
-                <boxGeometry args={[0.04, d3d * 0.88, 0.04]} />
-                <meshPhysicalMaterial color={color} roughness={0.5} transparent={opacity < 1} opacity={opacity} />
-            </mesh>
-        </group>
-    );
+  return (
+    <group>
+      <mesh position={[0, d3d * 0.9, 0]} castShadow receiveShadow>
+        <boxGeometry args={[w3d, 0.04, h3d]} />
+        <meshPhysicalMaterial color={color} roughness={0.5} transparent={opacity < 1} opacity={opacity} />
+      </mesh>
+      <mesh position={[-w3d * 0.38, d3d * 0.45, 0]} castShadow>
+        <boxGeometry args={[w3d * 0.22, d3d * 0.88, h3d * 0.92]} />
+        <meshPhysicalMaterial color={color} roughness={0.55} transparent={opacity < 1} opacity={opacity} />
+      </mesh>
+      <mesh position={[w3d * 0.42, d3d * 0.45, h3d * 0.4]} castShadow>
+        <boxGeometry args={[0.04, d3d * 0.88, 0.04]} />
+        <meshPhysicalMaterial color={color} roughness={0.5} transparent={opacity < 1} opacity={opacity} />
+      </mesh>
+      <mesh position={[w3d * 0.42, d3d * 0.45, -h3d * 0.4]} castShadow>
+        <boxGeometry args={[0.04, d3d * 0.88, 0.04]} />
+        <meshPhysicalMaterial color={color} roughness={0.5} transparent={opacity < 1} opacity={opacity} />
+      </mesh>
+    </group>
+  );
 }
 
 function TVStand3D({ w3d, h3d, d3d, color, opacity }: { w3d: number; h3d: number; d3d: number; color: THREE.Color; opacity: number }) {
-    return (
-        <group>
-            <mesh position={[0, d3d / 2, 0]} castShadow receiveShadow>
-                <boxGeometry args={[w3d, d3d, h3d]} />
-                <meshPhysicalMaterial color={color} roughness={0.5} transparent={opacity < 1} opacity={opacity} />
-            </mesh>
-            <mesh position={[0, d3d + 0.01, -h3d * 0.3]}>
-                <boxGeometry args={[w3d * 0.8, 0.02, 0.02]} />
-                <meshStandardMaterial color="#333" roughness={0.2} metalness={0.4} />
-            </mesh>
-        </group>
-    );
+  return (
+    <group>
+      <mesh position={[0, d3d / 2, 0]} castShadow receiveShadow>
+        <boxGeometry args={[w3d, d3d, h3d]} />
+        <meshPhysicalMaterial color={color} roughness={0.5} transparent={opacity < 1} opacity={opacity} />
+      </mesh>
+      <mesh position={[0, d3d + 0.01, -h3d * 0.3]}>
+        <boxGeometry args={[w3d * 0.8, 0.02, 0.02]} />
+        <meshStandardMaterial color="#333" roughness={0.2} metalness={0.4} />
+      </mesh>
+    </group>
+  );
 }
 
 function Cabinet3D({ w3d, h3d, d3d, color, opacity }: { w3d: number; h3d: number; d3d: number; color: THREE.Color; opacity: number }) {
-    return (
-        <group>
-            <mesh position={[0, d3d / 2, 0]} castShadow receiveShadow>
-                <boxGeometry args={[w3d, d3d, h3d]} />
-                <meshPhysicalMaterial color={color} roughness={0.6} transparent={opacity < 1} opacity={opacity} />
-            </mesh>
-            <mesh position={[0, d3d / 2, h3d / 2 + 0.005]}>
-                <boxGeometry args={[0.015, d3d * 0.7, 0.015]} />
-                <meshStandardMaterial color="#1a1a1a" roughness={0.2} metalness={0.6} />
-            </mesh>
-        </group>
-    );
+  return (
+    <group>
+      <mesh position={[0, d3d / 2, 0]} castShadow receiveShadow>
+        <boxGeometry args={[w3d, d3d, h3d]} />
+        <meshPhysicalMaterial color={color} roughness={0.6} transparent={opacity < 1} opacity={opacity} />
+      </mesh>
+      <mesh position={[0, d3d / 2, h3d / 2 + 0.005]}>
+        <boxGeometry args={[0.015, d3d * 0.7, 0.015]} />
+        <meshStandardMaterial color="#1a1a1a" roughness={0.2} metalness={0.6} />
+      </mesh>
+    </group>
+  );
 }
 
 function CatalogModel3D({
-    modelUrl,
-    w3d,
-    h3d,
-    d3d,
-    opacity,
-    modelScale,
-    tintColor,
+  modelUrl,
+  w3d,
+  h3d,
+  d3d,
+  opacity,
+  modelScale,
+  tintColor,
 }: {
-    modelUrl: string;
-    w3d: number;
-    h3d: number;
-    d3d: number;
-    opacity: number;
-    modelScale?: number;
-    tintColor: string;
+  modelUrl: string;
+  w3d: number;
+  h3d: number;
+  d3d: number;
+  opacity: number;
+  modelScale?: number;
+  tintColor: string;
 }) {
-    const gltf = useGLTF(modelUrl);
-    const model = useMemo(() => gltf.scene.clone(true), [gltf.scene]);
+  const gltf = useGLTF(modelUrl);
+  const model = useMemo(() => gltf.scene.clone(true), [gltf.scene]);
 
-    const naturalBox = useMemo(() => {
-        return new THREE.Box3().setFromObject(model);
-    }, [model]);
+  const naturalBox = useMemo(() => {
+    return new THREE.Box3().setFromObject(model);
+  }, [model]);
 
-    const { scale, offset } = useMemo(() => {
-        const size = new THREE.Vector3();
-        const center = new THREE.Vector3();
-        naturalBox.getSize(size);
-        naturalBox.getCenter(center);
+  const { scale, offset } = useMemo(() => {
+    const size = new THREE.Vector3();
+    const center = new THREE.Vector3();
+    naturalBox.getSize(size);
+    naturalBox.getCenter(center);
 
-        const srcMax = Math.max(size.x, size.y, size.z, 0.0001);
-        const targetMax = Math.max(w3d, d3d, h3d, 0.0001);
-        const fittedScale = (targetMax / srcMax) * (modelScale ?? 1);
+    const srcMax = Math.max(size.x, size.y, size.z, 0.0001);
+    const targetMax = Math.max(w3d, d3d, h3d, 0.0001);
+    const fittedScale = (targetMax / srcMax) * (modelScale ?? 1);
 
-        return {
-            scale: fittedScale,
-            offset: new THREE.Vector3(
-                -center.x * fittedScale,
-                -naturalBox.min.y * fittedScale,
-                -center.z * fittedScale,
-            ),
-        };
-    }, [naturalBox, w3d, d3d, h3d, modelScale]);
+    return {
+      scale: fittedScale,
+      offset: new THREE.Vector3(
+        -center.x * fittedScale,
+        -naturalBox.min.y * fittedScale,
+        -center.z * fittedScale,
+      ),
+    };
+  }, [naturalBox, w3d, d3d, h3d, modelScale]);
 
-    useEffect(() => {
-        model.traverse((child) => {
-            if (!(child instanceof THREE.Mesh)) return;
-            child.castShadow = true;
-            child.receiveShadow = true;
-            if (!child.material) return;
-            if (!child.userData.__fvClonedMaterial) {
-                child.material = Array.isArray(child.material)
-                    ? child.material.map((mat) => mat.clone())
-                    : child.material.clone();
-                child.userData.__fvClonedMaterial = true;
-            }
+  useEffect(() => {
+    model.traverse((child) => {
+      if (!(child instanceof THREE.Mesh)) return;
+      child.castShadow = true;
+      child.receiveShadow = true;
+      if (!child.material) return;  
+      if (!child.userData.__fvClonedMaterial) {
+        child.material = Array.isArray(child.material)
+          ? child.material.map((mat) => mat.clone())
+          : child.material.clone();
+        child.userData.__fvClonedMaterial = true;
+      }
 
-            const materials = Array.isArray(child.material) ? child.material : [child.material];
-            materials.forEach((mat) => {
-                if (!(mat instanceof THREE.Material)) return;
-                if ("color" in mat && mat.color instanceof THREE.Color) {
-                    mat.color.set(tintColor);
-                }
-                mat.transparent = opacity < 1;
-                mat.opacity = opacity;
-                mat.needsUpdate = true;
-            });
-        });
-    }, [model, opacity, tintColor]);
+      const materials = Array.isArray(child.material) ? child.material : [child.material];
+      materials.forEach((mat) => {
+        if (!(mat instanceof THREE.Material)) return;
+        if ("color" in mat && mat.color instanceof THREE.Color) {
+          mat.color.set(tintColor);
+        }
+        mat.transparent = opacity < 1;
+        mat.opacity = opacity;
+        mat.needsUpdate = true;
+      });
+    });
+  }, [model, opacity, tintColor]);
 
-    return (
-        <group scale={scale} position={[offset.x, offset.y, offset.z]}>
-            <primitive object={model} />
-        </group>
-    );
+  return (
+    <group scale={scale} position={[offset.x, offset.y, offset.z]}>
+      <primitive object={model} />
+    </group>
+  );
 }
 
 
 
 const FurniturePiece = memo(function FurniturePiece({
-    item,
-    isSelected,
-    onSelect,
+  item,
+  isSelected,
+  onSelect,
 }: {
-    item: FurnitureItem;
-    isSelected: boolean;
-    onSelect: () => void;
+  item: FurnitureItem;
+  isSelected: boolean;
+  onSelect: () => void;
 }) {
-    const { room, transformMode, updateItem, pushHistory } = useDesignStore();
-    const groupRef = useRef<THREE.Group>(null);
-    const modelRootRef = useRef<THREE.Group>(null);
-    const modelBoundsRef = useRef(new THREE.Box3());
-    const roomW = room.width / 100;
-    const roomH = room.height / 100;
-    const wallH = room.wallHeight / 100;
+  const { room, transformMode, updateItem, pushHistory } = useDesignStore();
+  const groupRef = useRef<THREE.Group>(null);
+  const modelRootRef = useRef<THREE.Group>(null);
+  const modelBoundsRef = useRef(new THREE.Box3());
+  const roomW = room.width / 100;
+  const roomH = room.height / 100;
+  const wallH = room.wallHeight / 100;
 
-    const w3d = item.width / 100;
-    const h3d = item.height / 100;
-    const d3d = item.depth / 100;
+  const w3d = item.width / 100;
+  const h3d = item.height / 100;
+  const d3d = item.depth / 100;
 
-    const x3d = (item.x + item.width / 2) / 100 - roomW / 2;
-    const z3d = (item.y + item.height / 2) / 100 - roomH / 2;
-    const baseYOffset = item.zIndex * 0.002;
-    const y3d = baseYOffset + (item.elevation ?? 0);
+  const x3d = (item.x + item.width / 2) / 100 - roomW / 2;
+  const z3d = (item.y + item.height / 2) / 100 - roomH / 2;
+  const baseYOffset = item.zIndex * 0.002;
+  const y3d = baseYOffset + (item.elevation ?? 0);
 
-    const color = hexToColor(item.color);
-    const rotY = -(item.rotation * Math.PI) / 180;
+  const color = hexToColor(item.color);
+  const rotY = -(item.rotation * Math.PI) / 180;
 
-    const matProps = {
-        color,
-        roughness: 0.5,
-        metalness: 0.05,
-        clearcoat: 0.1,
-        clearcoatRoughness: 0.4,
-        transparent: item.opacity < 1,
-        opacity: item.opacity,
-    };
+  const matProps = {
+    color,
+    roughness: 0.5,
+    metalness: 0.05,
+    clearcoat: 0.1,
+    clearcoatRoughness: 0.4,
+    transparent: item.opacity < 1,
+    opacity: item.opacity,
+  };
 
-    const handleTransformChange = useCallback(() => {
-        if (!groupRef.current) return;
-        const pos = groupRef.current.position;
-        const rot = groupRef.current.rotation;
+  const handleTransformChange = useCallback(() => {
+    if (!groupRef.current) return;
+    const pos = groupRef.current.position;
+    const rot = groupRef.current.rotation;
 
-        const halfExtents = getRotatedHalfExtents(w3d, h3d, rot.y);
-        const minX = -roomW / 2 + halfExtents.x;
-        const maxX = roomW / 2 - halfExtents.x;
-        const minZ = -roomH / 2 + halfExtents.z;
-        const maxZ = roomH / 2 - halfExtents.z;
+    const halfExtents = getRotatedHalfExtents(w3d, h3d, rot.y);
+    const minX = -roomW / 2 + halfExtents.x;
+    const maxX = roomW / 2 - halfExtents.x;
+    const minZ = -roomH / 2 + halfExtents.z;
+    const maxZ = roomH / 2 - halfExtents.z;
 
-        pos.x = clamp(pos.x, minX, maxX);
-        pos.z = clamp(pos.z, minZ, maxZ);
+    pos.x = clamp(pos.x, minX, maxX);
+    pos.z = clamp(pos.z, minZ, maxZ);
 
-        if (modelRootRef.current) {
-            modelRootRef.current.updateWorldMatrix(true, true);
-            const modelBounds = modelBoundsRef.current.setFromObject(modelRootRef.current);
-            const roomMinX = -roomW / 2;
-            const roomMaxX = roomW / 2;
-            const roomMinZ = -roomH / 2;
-            const roomMaxZ = roomH / 2;
-            const roomMinY = 0;
-            const roomMaxY = wallH;
+    if (modelRootRef.current) {
+      modelRootRef.current.updateWorldMatrix(true, true);
+      const modelBounds = modelBoundsRef.current.setFromObject(modelRootRef.current);
+      const roomMinX = -roomW / 2;
+      const roomMaxX = roomW / 2;
+      const roomMinZ = -roomH / 2;
+      const roomMaxZ = roomH / 2;
+      const roomMinY = 0;
+      const roomMaxY = wallH;
 
-            if (!modelBounds.isEmpty()) {
-                if (modelBounds.min.x < roomMinX && modelBounds.max.x > roomMaxX) {
-                    pos.x = 0;
-                } else {
-                    if (modelBounds.min.x < roomMinX) {
-                        pos.x += roomMinX - modelBounds.min.x;
-                    }
-                    if (modelBounds.max.x > roomMaxX) {
-                        pos.x += roomMaxX - modelBounds.max.x;
-                    }
-                }
-
-                if (modelBounds.min.z < roomMinZ && modelBounds.max.z > roomMaxZ) {
-                    pos.z = 0;
-                } else {
-                    if (modelBounds.min.z < roomMinZ) {
-                        pos.z += roomMinZ - modelBounds.min.z;
-                    }
-                    if (modelBounds.max.z > roomMaxZ) {
-                        pos.z += roomMaxZ - modelBounds.max.z;
-                    }
-                }
-
-                if (modelBounds.min.y < roomMinY && modelBounds.max.y > roomMaxY) {
-                    const modelCenterY = (modelBounds.min.y + modelBounds.max.y) / 2;
-                    pos.y += (roomMinY + roomMaxY) / 2 - modelCenterY;
-                } else {
-                    if (modelBounds.min.y < roomMinY) {
-                        pos.y += roomMinY - modelBounds.min.y;
-                    }
-                    if (modelBounds.max.y > roomMaxY) {
-                        pos.y += roomMaxY - modelBounds.max.y;
-                    }
-                }
-            }
-        }
-
-        const maxPlanX = Math.max(0, roomW * 100 - item.width);
-        const maxPlanY = Math.max(0, roomH * 100 - item.height);
-        const newX = clamp((pos.x + roomW / 2) * 100 - item.width / 2, 0, maxPlanX);
-        const newY = clamp((pos.z + roomH / 2) * 100 - item.height / 2, 0, maxPlanY);
-        const newElevation = Math.max(0, pos.y - baseYOffset);
-        const newRotation = -(rot.y * 180) / Math.PI;
-
-        pos.x = (newX + item.width / 2) / 100 - roomW / 2;
-        pos.z = (newY + item.height / 2) / 100 - roomH / 2;
-        pos.y = baseYOffset + newElevation;
-
-        updateItem(item.instanceId, { x: newX, y: newY, elevation: newElevation, rotation: newRotation });
-    }, [baseYOffset, item.instanceId, item.width, item.height, roomW, roomH, updateItem, w3d, h3d, wallH]);
-
-    const handleTransformEnd = useCallback(() => {
-        pushHistory();
-    }, [pushHistory]);
-
-    const isLamp = item.catalogId.startsWith("lamp-");
-    const isRug = item.catalogId === "decor-rug";
-    const isPlant = item.catalogId === "decor-plant";
-    const isWardrobe = item.catalogId === "shelf-wardrobe";
-    const isBookshelf = item.catalogId === "shelf-bookcase";
-    const isBed = item.catalogId.startsWith("bed-") && !item.catalogId.includes("nightstand");
-    const isDesk = item.catalogId.startsWith("desk-");
-    const isTVStand = item.catalogId === "shelf-tv-stand";
-    const isCabinet = item.catalogId === "decor-storage" || item.catalogId === "shelf-display";
-    const catalogItem = FURNITURE_CATALOG.find((entry) => entry.id === item.catalogId);
-    const hasCustomModel = Boolean(catalogItem?.modelUrl);
-
-    let furnitureModel: React.ReactNode;
-    const glbFallbackModel = (
-        <mesh position={[0, d3d / 2, 0]} castShadow receiveShadow>
-            <boxGeometry args={[w3d, d3d, h3d]} />
-            <meshPhysicalMaterial {...matProps} />
-        </mesh>
-    );
-
-    if (hasCustomModel && catalogItem?.modelUrl) {
-        furnitureModel = (
-            <ModelLoadBoundary fallback={glbFallbackModel}>
-                <Suspense fallback={glbFallbackModel}>
-                    <CatalogModel3D
-                        modelUrl={catalogItem.modelUrl}
-                        modelScale={item.modelScale ?? catalogItem.modelScale ?? 1}
-                        w3d={w3d}
-                        h3d={h3d}
-                        d3d={d3d}
-                        opacity={item.opacity}
-                        tintColor={item.color}
-                    />
-                </Suspense>
-            </ModelLoadBoundary>
-        );
-    } else if (isLamp && item.catalogId === "lamp-floor") {
-        furnitureModel = <FloorLamp3D color={color} opacity={item.opacity} />;
-    } else if (isLamp && item.catalogId === "lamp-table") {
-        furnitureModel = <TableLamp3D color={color} opacity={item.opacity} />;
-    } else if (isRug) {
-        furnitureModel = <Rug3D w3d={w3d} h3d={h3d} color={color} opacity={item.opacity} />;
-    } else if (isPlant) {
-        furnitureModel = <Plant3D color={color} opacity={item.opacity} />;
-    } else if (isWardrobe) {
-        furnitureModel = <Wardrobe3D w3d={w3d} h3d={h3d} d3d={d3d} color={color} opacity={item.opacity} />;
-    } else if (isBookshelf) {
-        furnitureModel = <Bookshelf3D w3d={w3d} h3d={h3d} d3d={d3d} color={color} opacity={item.opacity} />;
-    } else if (isBed) {
-        furnitureModel = <Bed3D w3d={w3d} h3d={h3d} d3d={d3d} color={color} opacity={item.opacity} />;
-    } else if (isDesk) {
-        furnitureModel = <Desk3D w3d={w3d} h3d={h3d} d3d={d3d} color={color} opacity={item.opacity} />;
-    } else if (isTVStand) {
-        furnitureModel = <TVStand3D w3d={w3d} h3d={h3d} d3d={d3d} color={color} opacity={item.opacity} />;
-    } else if (isCabinet) {
-        furnitureModel = <Cabinet3D w3d={w3d} h3d={h3d} d3d={d3d} color={color} opacity={item.opacity} />;
-    } else if (item.shapeType === "circle") {
-        furnitureModel = (
-            <group>
-                {d3d > 0.5 &&
-                    [[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([dx, dz], i) => (
-                        <mesh key={i} position={[dx * w3d * 0.35, 0.15, dz * w3d * 0.35]} castShadow>
-                            <cylinderGeometry args={[0.012, 0.018, 0.3, 8]} />
-                            <meshStandardMaterial color="#222" roughness={0.2} metalness={0.6} />
-                        </mesh>
-                    ))}
-                <mesh position={[0, d3d / 2, 0]} castShadow receiveShadow>
-                    <cylinderGeometry args={[w3d / 2, w3d / 2, d3d * 0.3, 32]} />
-                    <meshPhysicalMaterial {...matProps} />
-                </mesh>
-            </group>
-        );
-    } else if (item.shapeType === "ellipse") {
-        furnitureModel = (
-            <mesh position={[0, d3d / 2, 0]} castShadow receiveShadow>
-                <cylinderGeometry args={[w3d / 2, w3d / 2, d3d * 0.3, 32]} />
-                <meshPhysicalMaterial {...matProps} />
-            </mesh>
-        );
-    } else {
-        const isChairLike = d3d > 0.5 && w3d < 1;
-        const isSofaLike = d3d > 0.5 && w3d >= 1;
-
-        if (isChairLike) {
-            const legMat = { color: "#1a1a1a", roughness: 0.15, metalness: 0.7 };
-            furnitureModel = (
-                <group>
-                    {[[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([dx, dz], i) => (
-                        <mesh key={i} position={[dx * (w3d / 2 - 0.03), 0.2, dz * (h3d / 2 - 0.03)]} castShadow>
-                            <cylinderGeometry args={[0.012, 0.015, 0.4, 8]} />
-                            <meshStandardMaterial {...legMat} />
-                        </mesh>
-                    ))}
-                    <mesh position={[0, 0.42, 0]} castShadow receiveShadow>
-                        <boxGeometry args={[w3d * 0.92, 0.05, h3d * 0.92]} />
-                        <meshPhysicalMaterial {...matProps} />
-                    </mesh>
-                    <mesh position={[0, 0.72, -h3d / 2 + 0.025]} castShadow>
-                        <boxGeometry args={[w3d * 0.88, 0.55, 0.035]} />
-                        <meshPhysicalMaterial {...matProps} />
-                    </mesh>
-                </group>
-            );
-        } else if (isSofaLike) {
-            const sH = 0.38;
-            const armW = 0.09;
-            furnitureModel = (
-                <group>
-                    {[[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([dx, dz], i) => (
-                        <mesh key={i} position={[dx * (w3d / 2 - 0.06), 0.05, dz * (h3d / 2 - 0.06)]} castShadow>
-                            <cylinderGeometry args={[0.02, 0.025, 0.1, 8]} />
-                            <meshStandardMaterial color="#111" roughness={0.2} metalness={0.6} />
-                        </mesh>
-                    ))}
-                    <mesh position={[0, sH / 2 + 0.1, 0.03]} castShadow receiveShadow>
-                        <boxGeometry args={[w3d - 0.02, sH, h3d - 0.02]} />
-                        <meshPhysicalMaterial {...matProps} roughness={0.75} />
-                    </mesh>
-                    <mesh position={[0, sH + 0.25, -h3d / 2 + 0.08]} castShadow>
-                        <boxGeometry args={[w3d - armW * 2 - 0.02, 0.32, 0.13]} />
-                        <meshPhysicalMaterial {...matProps} roughness={0.8} />
-                    </mesh>
-                    <mesh position={[-w3d / 2 + armW / 2, sH + 0.08, 0.03]} castShadow>
-                        <boxGeometry args={[armW, 0.22, h3d * 0.85]} />
-                        <meshPhysicalMaterial {...matProps} roughness={0.8} />
-                    </mesh>
-                    <mesh position={[w3d / 2 - armW / 2, sH + 0.08, 0.03]} castShadow>
-                        <boxGeometry args={[armW, 0.22, h3d * 0.85]} />
-                        <meshPhysicalMaterial {...matProps} roughness={0.8} />
-                    </mesh>
-                </group>
-            );
-        } else if (item.shapeType === "l-shape") {
-            furnitureModel = (
-                <group>
-                    <mesh position={[0, d3d / 2, h3d * 0.15]} castShadow receiveShadow>
-                        <boxGeometry args={[w3d, d3d, h3d * 0.5]} />
-                        <meshPhysicalMaterial {...matProps} />
-                    </mesh>
-                    <mesh position={[-w3d * 0.3, d3d / 2, -h3d * 0.15]} castShadow>
-                        <boxGeometry args={[w3d * 0.4, d3d, h3d * 0.5]} />
-                        <meshPhysicalMaterial {...matProps} />
-                    </mesh>
-                </group>
-            );
+      if (!modelBounds.isEmpty()) {
+        if (modelBounds.min.x < roomMinX && modelBounds.max.x > roomMaxX) {
+          pos.x = 0;
         } else {
-            furnitureModel = (
-                <mesh position={[0, d3d / 2, 0]} castShadow receiveShadow>
-                    <boxGeometry args={[w3d, d3d, h3d]} />
-                    <meshPhysicalMaterial {...matProps} />
-                </mesh>
-            );
+          if (modelBounds.min.x < roomMinX) {
+            pos.x += roomMinX - modelBounds.min.x;
+          }
+          if (modelBounds.max.x > roomMaxX) {
+            pos.x += roomMaxX - modelBounds.max.x;
+          }
         }
+
+        if (modelBounds.min.z < roomMinZ && modelBounds.max.z > roomMaxZ) {
+          pos.z = 0;
+        } else {
+          if (modelBounds.min.z < roomMinZ) {
+            pos.z += roomMinZ - modelBounds.min.z;
+          }
+          if (modelBounds.max.z > roomMaxZ) {
+            pos.z += roomMaxZ - modelBounds.max.z;
+          }
+        }
+
+        if (modelBounds.min.y < roomMinY && modelBounds.max.y > roomMaxY) {
+          const modelCenterY = (modelBounds.min.y + modelBounds.max.y) / 2;
+          pos.y += (roomMinY + roomMaxY) / 2 - modelCenterY;
+        } else {
+          if (modelBounds.min.y < roomMinY) {
+            pos.y += roomMinY - modelBounds.min.y;
+          }
+          if (modelBounds.max.y > roomMaxY) {
+            pos.y += roomMaxY - modelBounds.max.y;
+          }
+        }
+      }
     }
 
-    const selectionRingRadius = Math.max(w3d, h3d) * 0.7;
-    const shadowStrength = Math.min(1, Math.max(0, item.shadowBlur / 30));
+    const maxPlanX = Math.max(0, roomW * 100 - item.width);
+    const maxPlanY = Math.max(0, roomH * 100 - item.height);
+    const newX = clamp((pos.x + roomW / 2) * 100 - item.width / 2, 0, maxPlanX);
+    const newY = clamp((pos.z + roomH / 2) * 100 - item.height / 2, 0, maxPlanY);
+    const newElevation = Math.max(0, pos.y - baseYOffset);
+    const newRotation = -(rot.y * 180) / Math.PI;
 
-    return (
-        <>
-            <group
-                ref={groupRef}
-                position={[x3d, y3d, z3d]}
-                rotation={[0, rotY, 0]}
-                renderOrder={item.zIndex}
-                onClick={(e) => {
-                    e.stopPropagation();
-                    onSelect();
-                }}
-            >
-                {shadowStrength > 0 && (
-                    <mesh position={[0, 0.004, 0]} rotation={[-Math.PI / 2, 0, 0]} scale={[w3d * 0.55, h3d * 0.55, 1]} renderOrder={item.zIndex - 1}>
-                        <circleGeometry args={[1, 32]} />
-                        <meshBasicMaterial color="#000" transparent opacity={0.08 + shadowStrength * 0.2} depthWrite={false} />
-                    </mesh>
-                )}
-                <group ref={modelRootRef}>{furnitureModel}</group>
-                {isSelected && (
-                    <mesh position={[0, 0.01, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-                        <ringGeometry args={[selectionRingRadius * 0.85, selectionRingRadius, 48]} />
-                        <meshBasicMaterial color="#3b82f6" transparent opacity={0.4} side={THREE.DoubleSide} />
-                    </mesh>
-                )}
-            </group>
-            {isSelected && !item.locked && groupRef.current && (
-                <TransformControls
-                    object={groupRef.current}
-                    mode={transformMode}
-                    onObjectChange={handleTransformChange}
-                    onMouseUp={handleTransformEnd}
-                    size={0.6}
-                />
-            )}
-        </>
+    pos.x = (newX + item.width / 2) / 100 - roomW / 2;
+    pos.z = (newY + item.height / 2) / 100 - roomH / 2;
+    pos.y = baseYOffset + newElevation;
+
+    updateItem(item.instanceId, { x: newX, y: newY, elevation: newElevation, rotation: newRotation });
+  }, [baseYOffset, item.instanceId, item.width, item.height, roomW, roomH, updateItem, w3d, h3d, wallH]);
+
+  const handleTransformEnd = useCallback(() => {
+    pushHistory();
+  }, [pushHistory]);
+
+  const isLamp = item.catalogId.startsWith("lamp-");
+  const isRug = item.catalogId === "decor-rug";
+  const isPlant = item.catalogId === "decor-plant";
+  const isWardrobe = item.catalogId === "shelf-wardrobe";
+  const isBookshelf = item.catalogId === "shelf-bookcase";
+  const isBed = item.catalogId.startsWith("bed-") && !item.catalogId.includes("nightstand");
+  const isDesk = item.catalogId.startsWith("desk-");
+  const isTVStand = item.catalogId === "shelf-tv-stand";
+  const isCabinet = item.catalogId === "decor-storage" || item.catalogId === "shelf-display";
+  const catalogItem = FURNITURE_CATALOG.find((entry) => entry.id === item.catalogId);
+  const hasCustomModel = Boolean(catalogItem?.modelUrl);
+
+  let furnitureModel: React.ReactNode;
+  const glbFallbackModel = (
+    <mesh position={[0, d3d / 2, 0]} castShadow receiveShadow>
+      <boxGeometry args={[w3d, d3d, h3d]} />
+      <meshPhysicalMaterial {...matProps} />
+    </mesh>
+  );
+
+  if (hasCustomModel && catalogItem?.modelUrl) {
+    furnitureModel = (
+      <ModelLoadBoundary fallback={glbFallbackModel}>
+        <Suspense fallback={glbFallbackModel}>
+          <CatalogModel3D
+            modelUrl={catalogItem.modelUrl}
+            modelScale={item.modelScale ?? catalogItem.modelScale ?? 1}
+            w3d={w3d}
+            h3d={h3d}
+            d3d={d3d}
+            opacity={item.opacity}
+            tintColor={item.color}
+          />
+        </Suspense>
+      </ModelLoadBoundary>
     );
+  } else if (isLamp && item.catalogId === "lamp-floor") {
+    furnitureModel = <FloorLamp3D color={color} opacity={item.opacity} />;
+  } else if (isLamp && item.catalogId === "lamp-table") {
+    furnitureModel = <TableLamp3D color={color} opacity={item.opacity} />;
+  } else if (isRug) {
+    furnitureModel = <Rug3D w3d={w3d} h3d={h3d} color={color} opacity={item.opacity} />;
+  } else if (isPlant) {
+    furnitureModel = <Plant3D color={color} opacity={item.opacity} />;
+  } else if (isWardrobe) {
+    furnitureModel = <Wardrobe3D w3d={w3d} h3d={h3d} d3d={d3d} color={color} opacity={item.opacity} />;
+  } else if (isBookshelf) {
+    furnitureModel = <Bookshelf3D w3d={w3d} h3d={h3d} d3d={d3d} color={color} opacity={item.opacity} />;
+  } else if (isBed) {
+    furnitureModel = <Bed3D w3d={w3d} h3d={h3d} d3d={d3d} color={color} opacity={item.opacity} />;
+  } else if (isDesk) {
+    furnitureModel = <Desk3D w3d={w3d} h3d={h3d} d3d={d3d} color={color} opacity={item.opacity} />;
+  } else if (isTVStand) {
+    furnitureModel = <TVStand3D w3d={w3d} h3d={h3d} d3d={d3d} color={color} opacity={item.opacity} />;
+  } else if (isCabinet) {
+    furnitureModel = <Cabinet3D w3d={w3d} h3d={h3d} d3d={d3d} color={color} opacity={item.opacity} />;
+  } else if (item.shapeType === "circle") {
+    furnitureModel = (
+      <group>
+        {d3d > 0.5 &&
+          [[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([dx, dz], i) => (
+            <mesh key={i} position={[dx * w3d * 0.35, 0.15, dz * w3d * 0.35]} castShadow>
+              <cylinderGeometry args={[0.012, 0.018, 0.3, 8]} />
+              <meshStandardMaterial color="#222" roughness={0.2} metalness={0.6} />
+            </mesh>
+          ))}
+        <mesh position={[0, d3d / 2, 0]} castShadow receiveShadow>
+          <cylinderGeometry args={[w3d / 2, w3d / 2, d3d * 0.3, 32]} />
+          <meshPhysicalMaterial {...matProps} />
+        </mesh>
+      </group>
+    );
+  } else if (item.shapeType === "ellipse") {
+    furnitureModel = (
+      <mesh position={[0, d3d / 2, 0]} castShadow receiveShadow>
+        <cylinderGeometry args={[w3d / 2, w3d / 2, d3d * 0.3, 32]} />
+        <meshPhysicalMaterial {...matProps} />
+      </mesh>
+    );
+  } else {
+    const isChairLike = d3d > 0.5 && w3d < 1;
+    const isSofaLike = d3d > 0.5 && w3d >= 1;
+
+    if (isChairLike) {
+      const legMat = { color: "#1a1a1a", roughness: 0.15, metalness: 0.7 };
+      furnitureModel = (
+        <group>
+          {[[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([dx, dz], i) => (
+            <mesh key={i} position={[dx * (w3d / 2 - 0.03), 0.2, dz * (h3d / 2 - 0.03)]} castShadow>
+              <cylinderGeometry args={[0.012, 0.015, 0.4, 8]} />
+              <meshStandardMaterial {...legMat} />
+            </mesh>
+          ))}
+          <mesh position={[0, 0.42, 0]} castShadow receiveShadow>
+            <boxGeometry args={[w3d * 0.92, 0.05, h3d * 0.92]} />
+            <meshPhysicalMaterial {...matProps} />
+          </mesh>
+          <mesh position={[0, 0.72, -h3d / 2 + 0.025]} castShadow>
+            <boxGeometry args={[w3d * 0.88, 0.55, 0.035]} />
+            <meshPhysicalMaterial {...matProps} />
+          </mesh>
+        </group>
+      );
+    } else if (isSofaLike) {
+      const sH = 0.38;
+      const armW = 0.09;
+      furnitureModel = (
+        <group>
+          {[[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([dx, dz], i) => (
+            <mesh key={i} position={[dx * (w3d / 2 - 0.06), 0.05, dz * (h3d / 2 - 0.06)]} castShadow>
+              <cylinderGeometry args={[0.02, 0.025, 0.1, 8]} />
+              <meshStandardMaterial color="#111" roughness={0.2} metalness={0.6} />
+            </mesh>
+          ))}
+          <mesh position={[0, sH / 2 + 0.1, 0.03]} castShadow receiveShadow>
+            <boxGeometry args={[w3d - 0.02, sH, h3d - 0.02]} />
+            <meshPhysicalMaterial {...matProps} roughness={0.75} />
+          </mesh>
+          <mesh position={[0, sH + 0.25, -h3d / 2 + 0.08]} castShadow>
+            <boxGeometry args={[w3d - armW * 2 - 0.02, 0.32, 0.13]} />
+            <meshPhysicalMaterial {...matProps} roughness={0.8} />
+          </mesh>
+          <mesh position={[-w3d / 2 + armW / 2, sH + 0.08, 0.03]} castShadow>
+            <boxGeometry args={[armW, 0.22, h3d * 0.85]} />
+            <meshPhysicalMaterial {...matProps} roughness={0.8} />
+          </mesh>
+          <mesh position={[w3d / 2 - armW / 2, sH + 0.08, 0.03]} castShadow>
+            <boxGeometry args={[armW, 0.22, h3d * 0.85]} />
+            <meshPhysicalMaterial {...matProps} roughness={0.8} />
+          </mesh>
+        </group>
+      );
+    } else if (item.shapeType === "l-shape") {
+      furnitureModel = (
+        <group>
+          <mesh position={[0, d3d / 2, h3d * 0.15]} castShadow receiveShadow>
+            <boxGeometry args={[w3d, d3d, h3d * 0.5]} />
+            <meshPhysicalMaterial {...matProps} />
+          </mesh>
+          <mesh position={[-w3d * 0.3, d3d / 2, -h3d * 0.15]} castShadow>
+            <boxGeometry args={[w3d * 0.4, d3d, h3d * 0.5]} />
+            <meshPhysicalMaterial {...matProps} />
+          </mesh>
+        </group>
+      );
+    } else {
+      furnitureModel = (
+        <mesh position={[0, d3d / 2, 0]} castShadow receiveShadow>
+          <boxGeometry args={[w3d, d3d, h3d]} />
+          <meshPhysicalMaterial {...matProps} />
+        </mesh>
+      );
+    }
+  }
+
+  const selectionRingRadius = Math.max(w3d, h3d) * 0.7;
+  const shadowStrength = Math.min(1, Math.max(0, item.shadowBlur / 30));
+
+  return (
+    <>
+      <group
+        ref={groupRef}
+        position={[x3d, y3d, z3d]}
+        rotation={[0, rotY, 0]}
+        renderOrder={item.zIndex}
+        onClick={(e) => {
+          e.stopPropagation();
+          onSelect();
+        }}
+      >
+        {shadowStrength > 0 && (
+          <mesh position={[0, 0.004, 0]} rotation={[-Math.PI / 2, 0, 0]} scale={[w3d * 0.55, h3d * 0.55, 1]} renderOrder={item.zIndex - 1}>
+            <circleGeometry args={[1, 32]} />
+            <meshBasicMaterial color="#000" transparent opacity={0.08 + shadowStrength * 0.2} depthWrite={false} />
+          </mesh>
+        )}
+        <group ref={modelRootRef}>{furnitureModel}</group>
+        {isSelected && (
+          <mesh position={[0, 0.01, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+            <ringGeometry args={[selectionRingRadius * 0.85, selectionRingRadius, 48]} />
+            <meshBasicMaterial color="#3b82f6" transparent opacity={0.4} side={THREE.DoubleSide} />
+          </mesh>
+        )}
+      </group>
+      {isSelected && !item.locked && groupRef.current && (
+        <TransformControls
+          object={groupRef.current}
+          mode={transformMode}
+          onObjectChange={handleTransformChange}
+          onMouseUp={handleTransformEnd}
+          size={0.6}
+        />
+      )}
+    </>
+  );
 });
 
 function CameraZoomUpdater({ zoom }: { zoom: number }) {
-    const camera = useThree((state) => state.camera);
-    useFrame(() => {
-        if (camera instanceof THREE.PerspectiveCamera && Math.abs(camera.zoom - zoom) > 0.001) {
-            camera.zoom = zoom;
-            camera.updateProjectionMatrix();
-        }
-    });
-    return null;
+  const camera = useThree((state) => state.camera);
+  useFrame(() => {
+    if (camera instanceof THREE.PerspectiveCamera && Math.abs(camera.zoom - zoom) > 0.001) {
+      camera.zoom = zoom;
+      camera.updateProjectionMatrix();
+    }
+  });
+  return null;
 }
 
-function SceneSetup({ zoom }: { zoom?: number }) {
-    const { room, cameraMode, walkCameraPosition3d } = useDesignStore();
-    const camDist = (Math.max(room.width, room.height) / 100) * 1.3;
+function CinematicCameraRig({
+  active,
+  options,
+  onComplete,
+  onProgress,
+}: {
+  active: boolean;
+  options: CinematicOptions;
+  onComplete: () => void;
+  onProgress: (progress: number) => void;
+}) {
+  const camera = useThree((state) => state.camera);
+  const { room, items, selectedItemId } = useDesignStore();
+  const startTimeRef = useRef<number | null>(null);
+  const doneRef = useRef(false);
+  const lastProgressRef = useRef(-1);
+
+  useEffect(() => {
+    if (!active) {
+      startTimeRef.current = null;
+      doneRef.current = false;
+      lastProgressRef.current = -1;
+      return;
+    }
+
+    doneRef.current = false;
+    lastProgressRef.current = -1;
+  }, [active]);
+
+  useFrame((state) => {
+    if (!active) {
+      return;
+    }
+
+    if (startTimeRef.current === null) {
+      startTimeRef.current = state.clock.elapsedTime * 1000;
+    }
+
+    const elapsed = state.clock.elapsedTime * 1000 - startTimeRef.current;
+    const rawProgress = Math.min(1, elapsed / options.durationMs);
+    const progress = easeInOutSine(rawProgress);
     const roomW = room.width / 100;
     const roomH = room.height / 100;
     const wallH = room.wallHeight / 100;
-    const on = room.lightsOn;
-    const isCozy = room.renderProfile === "cozy";
-    const keyShadowMap: [number, number] = isCozy ? [3072, 3072] : [2048, 2048];
-    const shadowFrustum = Math.max(8, camDist * 1.6);
+    const radiusWideX = Math.max(roomW * 0.44, 1.4);
+    const radiusWideZ = Math.max(roomH * 0.48, 1.5);
+    const radiusMidX = Math.max(roomW * 0.36, 1.15);
+    const radiusMidZ = Math.max(roomH * 0.38, 1.2);
+    const selectedItem = options.focusMode === "selected"
+      ? items.find((item) => item.instanceId === selectedItemId)
+      : undefined;
+    const focusTarget = selectedItem ? getItemFocusPoint(selectedItem, room) : new THREE.Vector3(0, wallH * 0.24, -roomH * 0.04);
 
-    return (
+    if (options.drawnPath.length >= 2) {
+      const pathHeight = selectedItem ? wallH * 0.22 : wallH * 0.26;
+      const points = options.drawnPath.map((point) => getDrawnPathPosition(point, room, pathHeight));
+      const curve = new THREE.CatmullRomCurve3(points, false, "catmullrom", 0.45);
+      const curvePoint = curve.getPoint(progress);
+      const lookAheadPoint = curve.getPoint(Math.min(1, progress + 0.035));
+      const lookTarget = selectedItem
+        ? focusTarget.clone().lerp(lookAheadPoint, 0.22)
+        : lookAheadPoint.clone().lerp(focusTarget, 0.35);
+
+      curvePoint.y += Math.sin(progress * Math.PI * 3) * 0.035;
+      camera.position.copy(curvePoint);
+      camera.lookAt(lookTarget);
+
+      if (progress - lastProgressRef.current >= 0.02 || rawProgress === 1) {
+        lastProgressRef.current = progress;
+        onProgress(rawProgress);
+      }
+
+      if (rawProgress >= 1 && !doneRef.current) {
+        doneRef.current = true;
+        onComplete();
+      }
+      return;
+    }
+
+    const [angleA, angleB, angleC, angleD] = options.pathAnglesDeg;
+    const frontWidePos = focusTarget.clone().add(orbitOffset(radiusWideX, radiusWideZ, angleA, wallH * 0.28));
+    const frontWideTarget = focusTarget.clone().lerp(new THREE.Vector3(0, wallH * 0.26, -roomH * 0.02), selectedItem ? 0.55 : 1);
+    const leftRevealPos = focusTarget.clone().add(orbitOffset(radiusMidX, radiusMidZ, angleB, wallH * 0.24));
+    const leftRevealTarget = focusTarget.clone().add(new THREE.Vector3(-roomW * 0.04, 0.02, -roomH * 0.06));
+    const rightHeroPos = focusTarget.clone().add(orbitOffset(radiusWideX, radiusWideZ * 0.92, angleC, wallH * 0.3));
+    const rightHeroTarget = focusTarget.clone().add(new THREE.Vector3(roomW * 0.03, 0.04, -roomH * 0.03));
+    const detailPushPos = selectedItem
+      ? focusTarget.clone().add(orbitOffset(Math.max(roomW * 0.18, 0.8), Math.max(roomH * 0.22, 0.9), angleD, wallH * 0.18))
+      : focusTarget.clone().add(orbitOffset(Math.max(roomW * 0.24, 0.95), Math.max(roomH * 0.28, 1.05), angleD, wallH * 0.12));
+    const detailPushTarget = selectedItem
+      ? focusTarget.clone().add(new THREE.Vector3(0, 0.04, 0))
+      : new THREE.Vector3(roomW * 0.05, wallH * 0.22, -roomH * 0.16);
+    const sweepStartPos = focusTarget.clone().add(orbitOffset(radiusWideX * 1.05, radiusWideZ * 0.95, angleA, wallH * 0.22));
+    const sweepEndPos = focusTarget.clone().add(orbitOffset(radiusWideX * 1.05, radiusWideZ * 0.95, angleD, wallH * 0.22));
+    const sweepTarget = focusTarget.clone().add(new THREE.Vector3(0, 0.02, -roomH * 0.03));
+    const detailOrbitA = selectedItem
+      ? focusTarget.clone().add(orbitOffset(Math.max(roomW * 0.22, 0.9), Math.max(roomH * 0.24, 0.95), angleB, wallH * 0.17))
+      : leftRevealPos;
+    const detailOrbitB = selectedItem
+      ? focusTarget.clone().add(orbitOffset(Math.max(roomW * 0.2, 0.85), Math.max(roomH * 0.22, 0.9), angleC, wallH * 0.2))
+      : rightHeroPos;
+
+    let position = frontWidePos;
+    let target = frontWideTarget;
+
+    if (options.preset === "sweep") {
+      if (progress < 0.5) {
+        const shotProgress = easeInOutSine(segmentProgress(progress, 0, 0.5));
+        position = lerpVec3(frontWidePos, sweepStartPos, shotProgress);
+        target = lerpVec3(frontWideTarget, sweepTarget, shotProgress);
+      } else {
+        const shotProgress = easeInOutSine(segmentProgress(progress, 0.5, 1));
+        position = lerpVec3(sweepStartPos, sweepEndPos, shotProgress);
+        target = lerpVec3(sweepTarget, rightHeroTarget, shotProgress);
+      }
+    } else if (options.preset === "detail") {
+      if (progress < 0.35) {
+        const shotProgress = easeInOutSine(segmentProgress(progress, 0, 0.35));
+        position = lerpVec3(frontWidePos, detailOrbitA, shotProgress);
+        target = lerpVec3(frontWideTarget, detailPushTarget, shotProgress);
+      } else if (progress < 0.72) {
+        const shotProgress = easeInOutSine(segmentProgress(progress, 0.35, 0.72));
+        position = lerpVec3(detailOrbitA, detailOrbitB, shotProgress);
+        target = lerpVec3(detailPushTarget, focusTarget, shotProgress);
+      } else {
+        const shotProgress = easeInOutSine(segmentProgress(progress, 0.72, 1));
+        position = lerpVec3(detailOrbitB, detailPushPos, shotProgress);
+        target = lerpVec3(focusTarget, detailPushTarget, shotProgress);
+      }
+    } else {
+      if (progress < 0.28) {
+        const shotProgress = easeInOutSine(segmentProgress(progress, 0, 0.28));
+        position = lerpVec3(frontWidePos, leftRevealPos, shotProgress);
+        target = lerpVec3(frontWideTarget, leftRevealTarget, shotProgress);
+      } else if (progress < 0.66) {
+        const shotProgress = easeInOutSine(segmentProgress(progress, 0.28, 0.66));
+        position = lerpVec3(leftRevealPos, rightHeroPos, shotProgress);
+        target = lerpVec3(leftRevealTarget, rightHeroTarget, shotProgress);
+      } else {
+        const shotProgress = easeInOutSine(segmentProgress(progress, 0.66, 1));
+        position = lerpVec3(rightHeroPos, detailPushPos, shotProgress);
+        target = lerpVec3(rightHeroTarget, detailPushTarget, shotProgress);
+      }
+    }
+
+    position.y += Math.sin(progress * Math.PI * 3) * 0.04;
+    position.x += Math.sin(progress * Math.PI * 2.2) * 0.03;
+    target.y += Math.cos(progress * Math.PI * 2) * 0.015;
+
+    camera.position.copy(position);
+    camera.lookAt(target);
+
+    if (progress - lastProgressRef.current >= 0.02 || rawProgress === 1) {
+      lastProgressRef.current = progress;
+      onProgress(rawProgress);
+    }
+
+    if (rawProgress >= 1 && !doneRef.current) {
+      doneRef.current = true;
+      onComplete();
+    }
+  });
+
+  return null;
+}
+
+function SceneSetup({ zoom, cinematicActive = false }: { zoom?: number; cinematicActive?: boolean }) {
+  const { room, cameraMode, walkCameraPosition3d } = useDesignStore();
+  const camDist = (Math.max(room.width, room.height) / 100) * 1.3;
+  const roomW = room.width / 100;
+  const roomH = room.height / 100;
+  const wallH = room.wallHeight / 100;
+  const on = room.lightsOn;
+  const isCozy = room.renderProfile === "cozy";
+  const keyShadowMap: [number, number] = isCozy ? [3072, 3072] : [2048, 2048];
+  const shadowFrustum = Math.max(8, camDist * 1.6);
+
+  return (
+    <>
+      <PerspectiveCamera
+        makeDefault
+        position={cameraMode === "walk" ? [walkCameraPosition3d.x, walkCameraPosition3d.y, walkCameraPosition3d.z] : [camDist * 0.55, camDist * 0.6, camDist * 0.8]}
+        fov={cameraMode === "walk" ? 75 : 42}
+        near={0.01}
+        far={200}
+      />
+      {zoom == null ? null : <CameraZoomUpdater zoom={zoom} />}
+      
+      {!cinematicActive && cameraMode === "orbit" ? (
+        <OrbitCameraControls camDist={camDist} />
+      ) : !cinematicActive ? (
         <>
-            <PerspectiveCamera
-                makeDefault
-                position={cameraMode === "walk" ? [walkCameraPosition3d.x, walkCameraPosition3d.y, walkCameraPosition3d.z] : [camDist * 0.55, camDist * 0.6, camDist * 0.8]}
-                fov={cameraMode === "walk" ? 75 : 42}
-                near={0.01}
-                far={200}
-            />
-            {zoom == null ? null : <CameraZoomUpdater zoom={zoom} />}
-
-            {cameraMode === "orbit" ? (
-                <OrbitCameraControls camDist={camDist} />
-            ) : (
-                <>
-                    <FirstPersonControls />
-                    <MouseLookControls />
-                </>
-            )}
-
-            <ambientLight intensity={on ? (isCozy ? 0.28 : 0.38) : isCozy ? 0.06 : 0.06} />
-
-            <directionalLight
-                position={isCozy ? [4.2, 7.3, 2.8] : [5, 10, 5]}
-                intensity={on ? (isCozy ? 1.2 : 1.05) : isCozy ? 0.14 : 0.12}
-                color={isCozy ? "#ffe0c4" : "#f2f4ff"}
-                castShadow
-                shadow-mapSize={keyShadowMap}
-                shadow-camera-far={50}
-                shadow-camera-left={-shadowFrustum}
-                shadow-camera-right={shadowFrustum}
-                shadow-camera-top={shadowFrustum}
-                shadow-camera-bottom={-shadowFrustum}
-                shadow-bias={isCozy ? -0.00025 : -0.0002}
-                shadow-radius={isCozy ? 3 : 4}
-            />
-            <directionalLight
-                position={isCozy ? [-3.8, 5.4, -2.2] : [-4, 6, -3]}
-                intensity={on ? (isCozy ? 0.24 : 0.28) : isCozy ? 0.05 : 0.05}
-                color={isCozy ? "#a2b4cf" : "#9bb8d8"}
-            />
-
-            <pointLight
-                position={[0, wallH - 0.25, 0]}
-                intensity={on ? (isCozy ? 0.55 : 0.5) : 0}
-                distance={isCozy ? 11 : 10}
-                color={isCozy ? "#ffe1bf" : "#fff3e0"}
-                decay={2}
-            />
-            <spotLight
-                position={[roomW * 0.16, wallH - 0.08, roomH * 0.05]}
-                angle={isCozy ? Math.PI / 3.4 : Math.PI / 3}
-                penumbra={isCozy ? 0.92 : 0.8}
-                intensity={on ? (isCozy ? 0.38 : 0.3) : 0}
-                distance={isCozy ? 9 : 8}
-                color={isCozy ? "#ffe0c0" : "#fffaf0"}
-                castShadow={false}
-            />
-
-            {isCozy && on && (
-                <spotLight
-                    position={[-roomW * 0.24, wallH - 0.2, -roomH * 0.18]}
-                    angle={Math.PI / 4.8}
-                    penumbra={1}
-                    intensity={0.22}
-                    distance={6}
-                    color="#ffb487"
-                    castShadow={false}
-                />
-            )}
-
-            {!on && <directionalLight position={[2, 4, 6]} intensity={0.08} color="#c4d4ff" />}
-
-            <ContactShadows
-                position={[0, -0.002, 0]}
-                opacity={on ? (isCozy ? 0.36 : 0.3) : isCozy ? 0.18 : 0.15}
-                scale={(Math.max(room.width, room.height) / 100) * 2}
-                blur={isCozy ? 2.4 : 3}
-                far={isCozy ? 7 : 6}
-            />
-
-            <Environment
-                preset={isCozy ? "sunset" : "apartment"}
-                environmentIntensity={on ? (isCozy ? 0.35 : 0.38) : isCozy ? 0.08 : 0.08}
-            />
+          <FirstPersonControls />
+          <MouseLookControls />
         </>
-    );
+      ) : null}
+
+      <ambientLight intensity={on ? (isCozy ? 0.28 : 0.38) : isCozy ? 0.06 : 0.06} />
+
+      <directionalLight
+        position={isCozy ? [4.2, 7.3, 2.8] : [5, 10, 5]}
+        intensity={on ? (isCozy ? 1.2 : 1.05) : isCozy ? 0.14 : 0.12}
+        color={isCozy ? "#ffe0c4" : "#f2f4ff"}
+        castShadow
+        shadow-mapSize={keyShadowMap}
+        shadow-camera-far={50}
+        shadow-camera-left={-shadowFrustum}
+        shadow-camera-right={shadowFrustum}
+        shadow-camera-top={shadowFrustum}
+        shadow-camera-bottom={-shadowFrustum}
+        shadow-bias={isCozy ? -0.00025 : -0.0002}
+        shadow-radius={isCozy ? 3 : 4}
+      />
+      <directionalLight
+        position={isCozy ? [-3.8, 5.4, -2.2] : [-4, 6, -3]}
+        intensity={on ? (isCozy ? 0.24 : 0.28) : isCozy ? 0.05 : 0.05}
+        color={isCozy ? "#a2b4cf" : "#9bb8d8"}
+      />
+
+      <pointLight
+        position={[0, wallH - 0.25, 0]}
+        intensity={on ? (isCozy ? 0.55 : 0.5) : 0}
+        distance={isCozy ? 11 : 10}
+        color={isCozy ? "#ffe1bf" : "#fff3e0"}
+        decay={2}
+      />
+      <spotLight
+        position={[roomW * 0.16, wallH - 0.08, roomH * 0.05]}
+        angle={isCozy ? Math.PI / 3.4 : Math.PI / 3}
+        penumbra={isCozy ? 0.92 : 0.8}
+        intensity={on ? (isCozy ? 0.38 : 0.3) : 0}
+        distance={isCozy ? 9 : 8}
+        color={isCozy ? "#ffe0c0" : "#fffaf0"}
+        castShadow={false}
+      />
+
+      {isCozy && on && (
+        <spotLight
+          position={[-roomW * 0.24, wallH - 0.2, -roomH * 0.18]}
+          angle={Math.PI / 4.8}
+          penumbra={1}
+          intensity={0.22}
+          distance={6}
+          color="#ffb487"
+          castShadow={false}
+        />
+      )}
+
+      {!on && <directionalLight position={[2, 4, 6]} intensity={0.08} color="#c4d4ff" />}
+
+      <ContactShadows
+        position={[0, -0.002, 0]}
+        opacity={on ? (isCozy ? 0.36 : 0.3) : isCozy ? 0.18 : 0.15}
+        scale={(Math.max(room.width, room.height) / 100) * 2}
+        blur={isCozy ? 2.4 : 3}
+        far={isCozy ? 7 : 6}
+      />
+
+      <Environment
+        preset={isCozy ? "sunset" : "apartment"}
+        environmentIntensity={on ? (isCozy ? 0.35 : 0.38) : isCozy ? 0.08 : 0.08}
+      />
+    </>
+  );
 }
 
 function ScenePostProcessing() {
-    const { room } = useDesignStore();
-    const isCozy = room.renderProfile === "cozy";
+  const { room } = useDesignStore();
+  const isCozy = room.renderProfile === "cozy";
 
-    if (!room.postFxEnabled) {
-        return null;
-    }
+  if (!room.postFxEnabled) {
+    return null;
+  }
 
-    return (
-        <EffectComposer multisampling={8}>
-            <N8AO
-                aoRadius={isCozy ? 0.42 : 0.3}
-                distanceFalloff={isCozy ? 0.7 : 0.6}
-                intensity={isCozy ? 1.8 : 0.85}
-                quality={isCozy ? "high" : "medium"}
-                aoSamples={isCozy ? 20 : 16}
-                denoiseSamples={isCozy ? 6 : 10}
-                denoiseRadius={isCozy ? 8 : 12}
-            />
-            <Bloom
-                mipmapBlur
-                intensity={isCozy ? 0.22 : 0.08}
-                luminanceThreshold={isCozy ? 0.62 : 0.85}
-                luminanceSmoothing={0.25}
-            />
-            <Vignette eskil={false} offset={0.2} darkness={isCozy ? 0.36 : 0.26} />
-        </EffectComposer>
-    );
+  return (
+    <EffectComposer multisampling={8}>
+      <N8AO
+        aoRadius={isCozy ? 0.42 : 0.3}
+        distanceFalloff={isCozy ? 0.7 : 0.6}
+        intensity={isCozy ? 1.8 : 0.85}
+        quality={isCozy ? "high" : "medium"}
+        aoSamples={isCozy ? 20 : 16}
+        denoiseSamples={isCozy ? 6 : 10}
+        denoiseRadius={isCozy ? 8 : 12}
+      />
+      <Bloom
+        mipmapBlur
+        intensity={isCozy ? 0.22 : 0.08}
+        luminanceThreshold={isCozy ? 0.62 : 0.85}
+        luminanceSmoothing={0.25}
+      />
+      <Vignette eskil={false} offset={0.2} darkness={isCozy ? 0.36 : 0.26} />
+    </EffectComposer>
+  );
 }
 
-export function RoomViewer3D({ zoom }: { zoom?: number } = {}) {
-    const { items, selectedItemId, selectItem, room, cameraMode, setCameraMode } = useDesignStore();
-    const sortedItems = useMemo(() => [...items].sort((a, b) => a.zIndex - b.zIndex), [items]);
-    const isCozy = room.renderProfile === "cozy";
-    const exposure = isCozy ? (room.lightsOn ? 1.16 : 1) : 1.1;
-    const bgColor = isCozy ? "#100d0a" : "#0a0b0e";
+export function RoomViewer3D({
+  zoom,
+  cinematicTrigger = 0,
+  cinematicOptions = DEFAULT_CINEMATIC_OPTIONS,
+  onCinematicStateChange,
+}: {
+  zoom?: number;
+  cinematicTrigger?: number;
+  cinematicOptions?: CinematicOptions;
+  onCinematicStateChange?: (active: boolean) => void;
+} = {}) {
+  const { items, selectedItemId, selectItem, room, cameraMode, setCameraMode } = useDesignStore();
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
+  const [cinematicActive, setCinematicActive] = useState(false);
+  const [cinematicProgress, setCinematicProgress] = useState(0);
+  const [cinematicNotice, setCinematicNotice] = useState<string | null>(null);
+  const sortedItems = useMemo(() => [...items].sort((a, b) => a.zIndex - b.zIndex), [items]);
+  const isCozy = room.renderProfile === "cozy";
+  const exposure = isCozy ? (room.lightsOn ? 1.16 : 1) : 1.1;
+  const bgColor = isCozy ? "#100d0a" : "#0a0b0e";
 
-    useEffect(() => {
-        const handleKeyDown = (e: KeyboardEvent) => {
-            if (e.key === "Escape" && cameraMode === "walk") {
-                setCameraMode("orbit");
-                if (document.pointerLockElement) {
-                    document.exitPointerLock();
-                }
-            }
-        };
+  const stopRecorder = useCallback(() => {
+    const recorder = recorderRef.current;
+    if (!recorder) {
+      return;
+    }
 
-        window.addEventListener("keydown", handleKeyDown);
-        return () => window.removeEventListener("keydown", handleKeyDown);
-    }, [cameraMode, setCameraMode]);
+    if (recorder.state !== "inactive") {
+      recorder.stop();
+    }
 
-    return (
-        <div className="flex-1 bg-[#f7e7e1] relative" role="region" aria-label="3D room visualization">
+    recorderRef.current = null;
+  }, []);
 
-            <div className="absolute top-4 left-4 z-10 bg-white/90 backdrop-blur-md border border-slate-200 rounded-lg px-3 py-2 text-[10px] text-slate-500 font-mono">
-                {cameraMode === "walk" ? (
-                    <div className="flex flex-col gap-1">
-                        <div className="flex gap-3">
-                            <span><kbd className="px-1.5 py-0.5 bg-[#f7e7e1] border border-slate-200 rounded text-slate-600">W A S D</kbd> Move</span>
-                            <span><kbd className="px-1.5 py-0.5 bg-[#f7e7e1] border border-slate-200 rounded text-slate-600">Q E</kbd> Up/Down</span>
-                        </div>
-                        <div className="text-slate-400 text-[9px]">Move mouse to look around • Click to lock cursor</div>
-                    </div>
-                ) : (
-                    <div className="flex gap-3">
-                        <span><kbd className="px-1.5 py-0.5 bg-[#f7e7e1] border border-slate-200 rounded text-slate-600">Drag</kbd> Orbit</span>
-                        <span><kbd className="px-1.5 py-0.5 bg-[#f7e7e1] border border-slate-200 rounded text-slate-600">Scroll</kbd> Zoom</span>
-                        <span><kbd className="px-1.5 py-0.5 bg-[#f7e7e1] border border-slate-200 rounded text-slate-600">Click</kbd> Select</span>
-                    </div>
-                )}
+  const handleCinematicComplete = useCallback(() => {
+    setCinematicActive(false);
+    setCinematicProgress(1);
+    onCinematicStateChange?.(false);
+    stopRecorder();
+    window.setTimeout(() => {
+      setCinematicNotice(null);
+      setCinematicProgress(0);
+    }, 1800);
+  }, [onCinematicStateChange, stopRecorder]);
+
+  const startRecording = useCallback(() => {
+    const canvas = canvasRef.current?.querySelector("canvas");
+    if (!canvas || !(canvas instanceof HTMLCanvasElement)) {
+      setCinematicNotice("Playing cinematic preview...");
+      return;
+    }
+
+    if (typeof canvas.captureStream !== "function" || typeof MediaRecorder === "undefined") {
+      setCinematicNotice("Playing cinematic preview... recording not supported here.");
+      return;
+    }
+
+    const mimeTypes = cinematicOptions.formatPreference === "mp4"
+      ? ["video/mp4;codecs=h264", "video/mp4", "video/webm;codecs=vp9", "video/webm"]
+      : cinematicOptions.formatPreference === "webm"
+        ? ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"]
+        : ["video/mp4;codecs=h264", "video/mp4", "video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"];
+    const mimeType = mimeTypes.find((value) => MediaRecorder.isTypeSupported(value));
+    const stream = canvas.captureStream(30);
+    const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+    const outputExtension = recorder.mimeType.includes("mp4") ? "mp4" : "webm";
+    const fallbackUsed = outputExtension !== "mp4";
+
+    recordedChunksRef.current = [];
+    recorder.ondataavailable = (event) => {
+      if (event.data.size > 0) {
+        recordedChunksRef.current.push(event.data);
+      }
+    };
+    recorder.onstop = () => {
+      const chunks = recordedChunksRef.current;
+      if (!chunks.length) {
+        return;
+      }
+
+      const videoBlob = new Blob(chunks, { type: recorder.mimeType || `video/${outputExtension}` });
+      downloadBlob(videoBlob, `${toFileSafeName(room.name)}-cinematic.${outputExtension}`);
+      setCinematicNotice(
+        fallbackUsed
+          ? "Cinematic downloaded as WebM. MP4 encoding is not supported by this browser."
+          : "Cinematic video downloaded as MP4."
+      );
+      stream.getTracks().forEach((track) => track.stop());
+      recordedChunksRef.current = [];
+    };
+    recorder.onerror = () => {
+      setCinematicNotice("Cinematic preview finished, but recording failed.");
+      stream.getTracks().forEach((track) => track.stop());
+      recordedChunksRef.current = [];
+    };
+
+    recorderRef.current = recorder;
+    recorder.start(250);
+    setCinematicNotice(fallbackUsed ? "Recording cinematic video... WebM fallback active." : "Recording cinematic video as MP4...");
+  }, [cinematicOptions.formatPreference, room.name]);
+
+  useEffect(() => {
+    if (cinematicTrigger <= 0) {
+      return;
+    }
+
+    setCameraMode("orbit");
+    if (document.pointerLockElement) {
+      document.exitPointerLock();
+    }
+    setCinematicProgress(0);
+    setCinematicActive(true);
+    onCinematicStateChange?.(true);
+    startRecording();
+  }, [cinematicTrigger, onCinematicStateChange, setCameraMode, startRecording]);
+
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && cinematicActive) {
+        handleCinematicComplete();
+        return;
+      }
+
+      if (e.key === 'Escape' && cameraMode === "walk") {
+        setCameraMode("orbit");
+        if (document.pointerLockElement) {
+          document.exitPointerLock();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [cameraMode, cinematicActive, handleCinematicComplete, setCameraMode]);
+
+  useEffect(() => () => stopRecorder(), [stopRecorder]);
+
+  return (
+    <div ref={canvasRef} className="flex-1 bg-[#f7e7e1] relative" role="region" aria-label="3D room visualization">
+
+      <div className="absolute top-4 left-4 z-10 bg-white/90 backdrop-blur-md border border-slate-200 rounded-lg px-3 py-2 text-[10px] text-slate-500 font-mono">
+        {cameraMode === "walk" ? (
+          <div className="flex flex-col gap-1">
+            <div className="flex gap-3">
+              <span><kbd className="px-1.5 py-0.5 bg-[#f7e7e1] border border-slate-200 rounded text-slate-600">W A S D</kbd> Move</span>
+              <span><kbd className="px-1.5 py-0.5 bg-[#f7e7e1] border border-slate-200 rounded text-slate-600">Q E</kbd> Up/Down</span>
             </div>
+            <div className="text-slate-400 text-[9px]">Move mouse to look around • Click to lock cursor</div>
+          </div>
+        ) : (
+          <div className="flex gap-3">
+            <span><kbd className="px-1.5 py-0.5 bg-[#f7e7e1] border border-slate-200 rounded text-slate-600">Drag</kbd> Orbit</span>
+            <span><kbd className="px-1.5 py-0.5 bg-[#f7e7e1] border border-slate-200 rounded text-slate-600">Scroll</kbd> Zoom</span>
+            <span><kbd className="px-1.5 py-0.5 bg-[#f7e7e1] border border-slate-200 rounded text-slate-600">Click</kbd> Select</span>
+          </div>
+        )}
+      </div>
 
-            <Canvas
-                shadows
-                dpr={[1, 1.5]}
-                gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: exposure }}
-                className="w-full h-full"
-                onPointerMissed={() => selectItem(null)}
-            >
-                <color attach="background" args={[bgColor]} />
-                <SceneSetup zoom={zoom} />
-                <GradientBackground profile={room.renderProfile} />
-                <Room />
-                {sortedItems.map((item) => (
-                    <FurniturePiece
-                        key={item.instanceId}
-                        item={item}
-                        isSelected={selectedItemId === item.instanceId}
-                        onSelect={() => selectItem(item.instanceId)}
-                    />
-                ))}
-                <ScenePostProcessing />
-            </Canvas>
+      <Canvas
+        shadows
+        dpr={[1, 1.5]}
+        gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: exposure }}
+        className="w-full h-full"
+        onPointerMissed={() => selectItem(null)}
+      >
+        <color attach="background" args={[bgColor]} />
+        <SceneSetup zoom={zoom} cinematicActive={cinematicActive} />
+        <CinematicCameraRig
+          active={cinematicActive}
+          options={cinematicOptions}
+          onComplete={handleCinematicComplete}
+          onProgress={setCinematicProgress}
+        />
+        <GradientBackground profile={room.renderProfile} />
+        <Room />
+        {sortedItems.map((item) => (
+          <FurniturePiece
+            key={item.instanceId}
+            item={item}
+            isSelected={selectedItemId === item.instanceId}
+            onSelect={() => selectItem(item.instanceId)}
+          />
+        ))}
+        <ScenePostProcessing />
+      </Canvas> 
 
-            {cameraMode === "walk" && (
-                <div className="absolute bottom-3 right-3 bg-white/10  backdrop-blur-md border border-white    rounded-lg px-3 py-1.5 text-[10px] text-black-400 font-medium pointer-events-none">
-                    Walk Mode Active - Press Esc to unlock cursor
-                </div>
-            )}
+      {cinematicActive && (
+        <div className="absolute top-4 right-4 bg-black/70 backdrop-blur-md border border-white/10 rounded-xl px-3.5 py-2.5 text-white shadow-xl">
+          <div className="flex items-center justify-between gap-4 text-[10px] uppercase tracking-[0.2em] font-semibold">
+            <span>Cinematic Capture</span>
+            <span>{Math.round(cinematicProgress * 100)}%</span>
+          </div>
+          <div className="mt-2 h-1.5 w-44 rounded-full bg-white/10 overflow-hidden">
+            <div className="h-full bg-[#d28a62] transition-[width] duration-150" style={{ width: `${cinematicProgress * 100}%` }} />
+          </div>
+          <p className="mt-2 text-[10px] text-white/70">Press Esc to stop early.</p>
         </div>
-    );
+      )}
+
+      {cinematicNotice && !cinematicActive && (
+        <div className="absolute top-4 right-4 bg-white/92 backdrop-blur-md border border-slate-300 rounded-xl px-3 py-2 text-[11px] text-slate-700 shadow-lg">
+          {cinematicNotice}
+        </div>
+      )}
+      
+      {cameraMode === "walk" && (
+        <div className="absolute bottom-3 right-3 bg-white/10  backdrop-blur-md border border-white    rounded-lg px-3 py-1.5 text-[10px] text-black-400 font-medium pointer-events-none">
+          Walk Mode Active - Press Esc to unlock cursor
+        </div> 
+      )}
+    </div>
+  );
 }
