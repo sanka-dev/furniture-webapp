@@ -7,7 +7,8 @@ import { usePortfolioStore } from "@/lib/stores/portfolio-store";
 import { FurniturePanel } from "@/components/planner/furniture-panel";
 import { PropertiesPanel } from "@/components/planner/properties-panel";
 import { Toolbar } from "@/components/planner/toolbar";
-import { LayoutGrid, Box, ZoomIn, ZoomOut } from "lucide-react";
+import { DEFAULT_CINEMATIC_OPTIONS, type CinematicOptions } from "@/components/planner/room-viewer-3d";
+import { AlertTriangle, ZoomIn, ZoomOut } from "lucide-react";
 import dynamic from "next/dynamic";
 
 const RoomCanvas = dynamic(
@@ -41,18 +42,7 @@ function useMediaQuery(query: string) {
     return () => mql.removeEventListener("change", handler);
   }, [query]);
   return matches;
-}
-
-
-function PaneLabel({ icon: Icon, label }: { icon: React.ComponentType<{ className?: string }>; label: string }) {
-  return (
-    <div className="absolute top-3 left-3 z-10 flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/90 backdrop-blur-md border border-slate-300/60 shadow-md pointer-events-none select-none">
-      <Icon className="h-3.5 w-3.5 text-slate-500" />
-      <span className="text-[11px] font-semibold text-slate-600 tracking-wide uppercase">{label}</span>
-    </div>
-  );
-}
-
+} 
 
 function PaneZoom({
   zoom,
@@ -93,21 +83,34 @@ function PaneZoom({
 }
 
 
-function SplitView() {
+function SplitView({
+  cinematicTrigger,
+  cinematicOptions,
+  onCinematicStateChange,
+  zoom2d,
+  zoom3d,
+  onZoom2dIn,
+  onZoom2dOut,
+  onZoom2dReset,
+  onZoom3dIn,
+  onZoom3dOut,
+  onZoom3dReset,
+}: {
+  cinematicTrigger: number;
+  cinematicOptions: CinematicOptions;
+  onCinematicStateChange: (active: boolean) => void;
+  zoom2d: number;
+  zoom3d: number;
+  onZoom2dIn: () => void;
+  onZoom2dOut: () => void;
+  onZoom2dReset: () => void;
+  onZoom3dIn: () => void;
+  onZoom3dOut: () => void;
+  onZoom3dReset: () => void;
+}) {
   const [splitPercent, setSplitPercent] = useState(50);
   const [isDragging, setIsDragging] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
-
-  const [zoom2d, setZoom2d] = useState(0.75);
-  const [zoom3d, setZoom3d] = useState(1.0); 
-
-  const handleZoom2dIn = useCallback(() => setZoom2d((z) => Math.min(2.5, +(z + 0.1).toFixed(1))), []);
-  const handleZoom2dOut = useCallback(() => setZoom2d((z) => Math.max(0.2, +(z - 0.1).toFixed(1))), []);
-  const handleZoom2dReset = useCallback(() => setZoom2d(0.75), []);
-
-  const handleZoom3dIn = useCallback(() => setZoom3d((z) => Math.min(2.0, +(z + 0.1).toFixed(1))), []);
-  const handleZoom3dOut = useCallback(() => setZoom3d((z) => Math.max(0.3, +(z - 0.1).toFixed(1))), []);
-  const handleZoom3dReset = useCallback(() => setZoom3d(1.0), []);
 
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -145,7 +148,7 @@ function SplitView() {
 
       <div className="relative flex flex-col h-full" style={{ width: `${splitPercent}%` }}>
         <RoomCanvas zoom={zoom2d} /> 
-        <PaneZoom zoom={zoom2d} onZoomIn={handleZoom2dIn} onZoomOut={handleZoom2dOut} onReset={handleZoom2dReset} />
+        <PaneZoom zoom={zoom2d} onZoomIn={onZoom2dIn} onZoomOut={onZoom2dOut} onReset={onZoom2dReset} />
       </div>
 
 
@@ -177,8 +180,8 @@ function SplitView() {
       </div>
 
       <div className="relative flex flex-col h-full" style={{ width: `${100 - splitPercent}%` }}>
-        <RoomViewer3D fov={zoom3d} /> 
-        <PaneZoom zoom={zoom3d} onZoomIn={handleZoom3dIn} onZoomOut={handleZoom3dOut} onReset={handleZoom3dReset} />
+        <RoomViewer3D zoom={zoom3d} cinematicTrigger={cinematicTrigger} cinematicOptions={cinematicOptions} onCinematicStateChange={onCinematicStateChange} /> 
+        <PaneZoom zoom={zoom3d} onZoomIn={onZoom3dIn} onZoomOut={onZoom3dOut} onReset={onZoom3dReset} />
       </div>
     </div>
   );
@@ -189,11 +192,18 @@ function PlannerContent() {
   const editId = searchParams.get("edit");
   const { viewMode, loadDesign, room, panOffset, setPanOffset, selectedItemId, selectItem, items, cameraMode, setCameraMode } = useDesignStore();
   const { getDesign } = usePortfolioStore();
-  const [zoom, setZoom] = useState(0.75);
+  const [zoom2d, setZoom2d] = useState(0.75);
+  const [zoom3d, setZoom3d] = useState(1.0);
   const [loaded, setLoaded] = useState(false);
   const isMobile = useMediaQuery("(max-width: 768px)");
   const [bottomOpen, setBottomOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
+  const [cinematicTrigger, setCinematicTrigger] = useState(0);
+  const [cinematicActive, setCinematicActive] = useState(false);
+  const [cinematicOptions, setCinematicOptions] = useState<CinematicOptions>(DEFAULT_CINEMATIC_OPTIONS);
+  const [overlapAlert, setOverlapAlert] = useState<{ id: number } | null>(null);
+  const handleToggleBottom = useCallback(() => setBottomOpen((open) => !open), []);
+  const handleToggleRight = useCallback(() => setRightOpen((open) => !open), []);
 
   const handleToggleCameraMode = useCallback(() => {
     if (cameraMode === "walk") {
@@ -210,6 +220,26 @@ function PlannerContent() {
     }
   }, [cameraMode, setCameraMode]);
 
+  const handleStartCinematic = useCallback((options: CinematicOptions) => {
+    if (viewMode === "2d") {
+      return;
+    }
+
+    if (cameraMode === "walk") {
+      setCameraMode("orbit");
+      if (document.pointerLockElement) {
+        document.exitPointerLock();
+      }
+    }
+
+    setCinematicOptions(options);
+    setCinematicTrigger((value) => value + 1);
+  }, [cameraMode, setCameraMode, viewMode]);
+
+  const handlePlacementBlocked = useCallback(() => {
+    setOverlapAlert({ id: Date.now() });
+  }, []);
+
   useEffect(() => {
     if (isMobile) { setBottomOpen(false); setRightOpen(false); }
   }, [isMobile]);
@@ -222,27 +252,61 @@ function PlannerContent() {
     }
   }, [editId, loaded, getDesign, loadDesign]);
 
-  const handleZoomIn = useCallback(() => setZoom((z) => Math.min(2.5, +(z + 0.1).toFixed(1))), []);
-  const handleZoomOut = useCallback(() => setZoom((z) => Math.max(0.2, +(z - 0.1).toFixed(1))), []);
-  const handleZoomReset = useCallback(() => setZoom(0.75), []);
+  const handleZoom2dIn = useCallback(() => setZoom2d((value) => Math.min(2.5, +(value + 0.1).toFixed(1))), []);
+  const handleZoom2dOut = useCallback(() => setZoom2d((value) => Math.max(0.2, +(value - 0.1).toFixed(1))), []);
+  const handleZoom2dReset = useCallback(() => setZoom2d(0.75), []);
+
+  const handleZoom3dIn = useCallback(() => setZoom3d((value) => Math.min(2.0, +(value + 0.1).toFixed(1))), []);
+  const handleZoom3dOut = useCallback(() => setZoom3d((value) => Math.max(0.3, +(value - 0.1).toFixed(1))), []);
+  const handleZoom3dReset = useCallback(() => setZoom3d(1.0), []);
+
+  const toolbarZoom = viewMode === "2d" ? zoom2d : zoom3d;
+  const handleToolbarZoomIn = useCallback(() => {
+    if (viewMode === "2d") {
+      handleZoom2dIn();
+      return;
+    }
+    handleZoom3dIn();
+  }, [handleZoom2dIn, handleZoom3dIn, viewMode]);
+  const handleToolbarZoomOut = useCallback(() => {
+    if (viewMode === "2d") {
+      handleZoom2dOut();
+      return;
+    }
+    handleZoom3dOut();
+  }, [handleZoom2dOut, handleZoom3dOut, viewMode]);
+  const handleToolbarZoomReset = useCallback(() => {
+    if (viewMode === "2d") {
+      handleZoom2dReset();
+      return;
+    }
+    handleZoom3dReset();
+  }, [handleZoom2dReset, handleZoom3dReset, viewMode]);
 
   useEffect(() => {
     const onWheel = (e: WheelEvent) => {
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
-        if (e.deltaY < 0) handleZoomIn();
-        else handleZoomOut();
+        if (e.deltaY < 0) handleToolbarZoomIn();
+        else handleToolbarZoomOut();
       }
     };
     window.addEventListener("wheel", onWheel, { passive: false });
     return () => window.removeEventListener("wheel", onWheel);
-  }, [handleZoomIn, handleZoomOut]);
+  }, [handleToolbarZoomIn, handleToolbarZoomOut]);
 
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+      if (
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.tagName === 'SELECT' ||
+        target.isContentEditable
+      ) {
+        return;
+      }
       const isWalkMode = cameraMode === "walk";
 
       if (!isWalkMode) {
@@ -280,6 +344,20 @@ function PlannerContent() {
         useDesignStore.getState().setRoom({ snapToGrid: !room.snapToGrid });
         return;
       }
+
+      if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+        if (e.key === "f" || e.key === "F") {
+          e.preventDefault();
+          handleToggleBottom();
+          return;
+        }
+
+        if (e.key === "p" || e.key === "P") {
+          e.preventDefault();
+          handleToggleRight();
+          return;
+        }
+      }
       
       if (e.key === "Delete" || e.key === "Backspace") {
         if (selectedItemId) {
@@ -310,20 +388,25 @@ function PlannerContent() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [panOffset, setPanOffset, room.showGrid, room.snapToGrid, selectedItemId, selectItem, items, cameraMode]);
+  }, [panOffset, setPanOffset, room.showGrid, room.snapToGrid, selectedItemId, selectItem, items, cameraMode, handleToggleBottom, handleToggleRight]);
 
   return (
     <div className="flex h-screen flex-col bg-[#f7e7e1] font-sans" role="application" aria-label="Caza Room Planner">
       <Toolbar
-        zoom={zoom}
-        onZoomIn={handleZoomIn}
-        onZoomOut={handleZoomOut}
-        onZoomReset={handleZoomReset}
+        zoom={toolbarZoom}
+        onZoomIn={handleToolbarZoomIn}
+        onZoomOut={handleToolbarZoomOut}
+        onZoomReset={handleToolbarZoomReset}
         editId={editId}
+        bottomOpen={bottomOpen}
+        onToggleBottom={handleToggleBottom}
         rightOpen={rightOpen}
-        onToggleRight={() => setRightOpen(!rightOpen)}
+        onToggleRight={handleToggleRight}
         cameraMode={cameraMode}
         onToggleCameraMode={handleToggleCameraMode}
+        cinematicActive={cinematicActive}
+        cinematicOptions={cinematicOptions}
+        onStartCinematic={handleStartCinematic}
       />
 
       <div className="flex flex-1 overflow-hidden relative">
@@ -332,11 +415,23 @@ function PlannerContent() {
 
           <div className="flex flex-1 overflow-hidden relative" role="main" aria-label="Design canvas">
             {viewMode === "split" ? (
-              <SplitView />
+              <SplitView
+                cinematicTrigger={cinematicTrigger}
+                cinematicOptions={cinematicOptions}
+                onCinematicStateChange={setCinematicActive}
+                zoom2d={zoom2d}
+                zoom3d={zoom3d}
+                onZoom2dIn={handleZoom2dIn}
+                onZoom2dOut={handleZoom2dOut}
+                onZoom2dReset={handleZoom2dReset}
+                onZoom3dIn={handleZoom3dIn}
+                onZoom3dOut={handleZoom3dOut}
+                onZoom3dReset={handleZoom3dReset}
+              />
             ) : viewMode === "2d" ? (
-              <RoomCanvas zoom={zoom} />
+              <RoomCanvas zoom={zoom2d} />
             ) : (
-              <RoomViewer3D />
+              <RoomViewer3D zoom={zoom3d} cinematicTrigger={cinematicTrigger} cinematicOptions={cinematicOptions} onCinematicStateChange={setCinematicActive} />
             )}
           </div>
 
@@ -344,7 +439,8 @@ function PlannerContent() {
           <div className="absolute bottom-0 left-0 right-0 z-20">
             <FurniturePanel
               collapsed={!bottomOpen}
-              onToggle={() => setBottomOpen(!bottomOpen)}
+              onToggle={handleToggleBottom}
+              onPlacementBlocked={handlePlacementBlocked}
             />
           </div>
         </div>
@@ -365,10 +461,27 @@ function PlannerContent() {
         >
           <PropertiesPanel
             collapsed={!rightOpen}
-            onToggle={() => setRightOpen(!rightOpen)}
+            onToggle={handleToggleRight}
           />
         </aside>
       </div>
+      {overlapAlert && (
+        <div
+          key={overlapAlert.id}
+          className="planner-overlap-toast fixed bottom-4 left-4 z-[9999] flex items-start gap-3 bg-white border-2 border-slate-900 rounded-2xl shadow-2xl px-4 py-3 max-w-xs pointer-events-none"
+          onAnimationEnd={() => setOverlapAlert(null)}
+          role="alert"
+          aria-live="assertive"
+        >
+          <div className="mt-0.5 flex-shrink-0 rounded-xl bg-[#f7e7e1] p-1.5">
+            <AlertTriangle className="h-4 w-4 text-[#b0664c]" />
+          </div>
+          <div>
+            <p className="text-xs font-bold text-slate-900 mb-0.5">Placement Overlap</p>
+            <p className="text-[11px] text-slate-500 leading-snug">Another item already occupies the default drop zone. Move it away from the center first.</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
