@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useAuthStore } from "@/lib/stores/auth-store";
+import { supabase } from "@/lib/supabase/client";
+import type { Design, Project } from "@/lib/supabase/client";
 import {
   Box,
   Users,
@@ -13,7 +15,7 @@ import {
   ArrowUpRight,
   Clock, 
 } from "lucide-react";
-
+import { motion } from "framer-motion";
 
 const easeOutQuart: [number, number, number, number] = [0.25, 0.46, 0.45, 0.94];
 
