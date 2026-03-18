@@ -58,8 +58,6 @@
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/your-username/hci.git
-cd hci
 
 # 2. Install dependencies
 npm install
